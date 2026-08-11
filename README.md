@@ -95,14 +95,20 @@ Sample `~/.ace/config.json`:
 git clone https://github.com/ACE-Engineering/ace-sidecar.git
 cd ace-sidecar
 
-# Install editable package with test dependencies
-pip install -e .[test]
+# Create local virtual environment and install editable package
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
 ```
 
 ### Running Tests
 
 ```bash
+# Run 33 unit tests
 pytest
+
+# Run E2E server route verification
+python scripts/e2e_test.py
 ```
 
 ---
