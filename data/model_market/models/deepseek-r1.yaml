@@ -1,0 +1,30 @@
+schema_version: 1
+id: deepseek-r1
+family: deepseek
+kind: open_weight
+status: active
+modalities: [text]
+confidence: asserted
+
+capability:
+  math:      {score: 0.88, basis: operator-ranking, boards: [aime-2026, math-500, livebench-math], as_of: "2026-07-21", source: ""}
+  reasoning: {score: 0.88, basis: operator-ranking, as_of: "2026-07-21", source: ""}
+  chat:      {score: 0.80, basis: assumed, as_of: "2026-07-21", source: ""}
+
+offerings:
+  - provider: deepseek-direct
+    pricing: {kind: per_token, in: 0.55, out: 2.19, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  Operator table also lists Groq and Volcengine as hosts. Those providers are not modelled
+  yet - adding them is a providers/*.yaml file plus an offering, no code change.
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"

@@ -1,0 +1,14 @@
+schema_version: 1
+id: self-hosted
+label: Own GPUs (fleet.yaml destinations)
+adapter: self-hosted        # resolved through ace.registry DestinationSpec, not a ProviderAdapter
+integration: external
+kind: self-hosted
+regions: [on-prem]
+residency: {in_house: true, zero_retention_available: true}
+credentials: [destination_id]
+pricing_page: ""
+notes: >-
+  Offerings here MUST use provisioned or marginal_sunk pricing and carry destination_id,
+  which joins ace.registry. Cost is derived from ace.hardware instance price and achieved
+  throughput - both declared, not measured (design section 11, weakness 5).

@@ -1,0 +1,19 @@
+schema_version: 1
+id: gpt-5.4-nano
+family: gpt-5
+kind: vendor
+status: active
+modalities: [text]
+confidence: asserted   # no capability evidence yet; price is cited
+offerings:
+  - provider: openai
+    pricing: {kind: per_token, in: 0.2, out: 1.25, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-23"
+    source: "https://developers.openai.com/api/docs/pricing"
+provenance: vendor-doc
+updated: "2026-07-23"
+references:
+  - title: "openai official pricing"
+    url: "https://developers.openai.com/api/docs/pricing"
+    as_of: "2026-07-23"

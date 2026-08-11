@@ -1,0 +1,40 @@
+schema_version: 1
+id: gemini-3.6-flash
+family: gemini
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted
+
+capability:
+  long_context:  {score: 0.88, basis: operator-ranking, boards: [long-context-retrieval, needle-in-a-haystack], as_of: "2026-07-21", source: ""}
+  summarization: {score: 0.88, basis: operator-ranking, boards: [artificial-analysis-price-performance], as_of: "2026-07-21", source: ""}
+  extraction:    {score: 0.88, basis: operator-ranking, as_of: "2026-07-21", source: ""}
+  chat:          {score: 0.85, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  realtime: {basis: assumed, boards: [artificial-analysis-price-performance]}
+  longctx:  {basis: assumed}
+
+offerings:
+  - provider: google-vertex
+    pricing: {kind: per_token, in: 1.5, cached_in: 0.15, out: 7.5, unit: usd_per_1m}
+    regions: [us-central1, europe-west4]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: Listed as top performer for high-efficiency / real-time pipelines. UNREACHABLE until the vertex adapter lands.
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 50
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"

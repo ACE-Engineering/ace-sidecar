@@ -1,0 +1,9 @@
+schema_version: 1
+id: deepseek-direct
+label: DeepSeek (first-party API)
+adapter: openai             # OpenAI-compatible surface; reachable via base_url override
+integration: external
+kind: first-party
+regions: [global]
+credentials: [api_key, base_url]
+pricing_page: ""

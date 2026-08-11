@@ -1,0 +1,20 @@
+schema_version: 1
+id: gemini-2.5-pro
+family: gemini
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted   # no capability evidence yet; price is cited
+offerings:
+  - provider: google
+    pricing: {kind: per_token, in: 1.25, out: 10.0, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-23"
+    source: "https://ai.google.dev/gemini-api/docs/pricing"
+provenance: vendor-doc
+updated: "2026-07-23"
+references:
+  - title: "google official pricing"
+    url: "https://ai.google.dev/gemini-api/docs/pricing"
+    as_of: "2026-07-23"
+notes: "<=200k tier"

@@ -1,0 +1,41 @@
+schema_version: 1
+id: claude-opus-5
+family: claude
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted
+
+capability:
+  code:         {score: 0.96, basis: assumed, boards: [swe-bench-verified, terminal-bench-2.1], as_of: "2026-07-27", source: ""}
+  long_context: {score: 0.95, basis: assumed, boards: [long-context-retrieval], as_of: "2026-07-27", source: ""}
+  chat:         {score: 0.92, basis: assumed, as_of: "2026-07-27", source: ""}
+
+profiles:
+  agentic: {basis: assumed}
+  longctx: {basis: assumed, boards: [long-context-retrieval]}
+
+offerings:
+  - provider: anthropic
+    # Same headline rate as opus-4-8. cached_in is the cache-READ rate (0.1x input);
+    # cache WRITES are not a catalog field — they are a fixed multiple of `in`
+    # (1.25x at the 5m TTL, 2x at 1h) and are derived in gateway/pricing.py.
+    pricing: {kind: per_token, in: 5.0, out: 25.0, cached_in: 0.50, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-28"
+    source: "https://platform.claude.com/docs/en/about-claude/pricing"
+
+provenance: vendor-doc
+notes: >-
+  Added 2026-07-27 for the coding-layer cost accounting (P0-6) — the catalog had entries
+  through opus-4-8 but none for opus-5, so an opus-5 request priced as "unknown model".
+  Pricing is the Anthropic first-party rate: $5/$25 per 1M in/out, $0.50 cache read —
+  a drop-in upgrade at opus-4-8's pricing. Capability scores are ASSUMED (positioned
+  above opus-4-8, not measured on this fleet) and should be replaced with
+  operator-ranking once there are eval numbers.
+
+updated: "2026-07-27"
+references:
+  - title: "Anthropic pricing"
+    url: "https://claude.com/pricing"
+    as_of: "2026-07-27"

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acefleet.dev/schema/model_market/provider.schema.json",
+  "title": "Model Market Matrix - provider entry",
+  "description": "A place a model can be bought or served from. `adapter` joins to ace.gateway.providers: a model is only REACHABLE if its provider's adapter is registered AND the tenant holds credentials for it. That join is the gap this KB exists to close.",
+  "type": "object",
+  "required": ["schema_version", "id", "adapter", "integration"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "minLength": 1},
+    "label": {"type": "string"},
+    "adapter": {
+      "type": "string",
+      "description": "ProviderAdapter.name in ace.gateway.providers, or 'self-hosted' for fleet.yaml destinations."
+    },
+    "integration": {
+      "enum": ["implemented", "planned", "external"],
+      "description": "implemented = an adapter is registered today. planned = declared in PLANNED_PROVIDERS, errors clearly if selected. external = reachable only via an OpenAI-compatible base_url, no bespoke adapter."
+    },
+    "kind": {"enum": ["first-party", "cloud", "serverless-host", "aggregator", "self-hosted"]},
+    "regions": {"type": "array", "items": {"type": "string"}},
+    "residency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jurisdictions": {"type": "array", "items": {"type": "string"}},
+        "zero_retention_available": {"type": "boolean"},
+        "certs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "credentials": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Config keys a tenant must supply for this provider to be reachable."
+    },
+    "pricing_page": {"type": "string"},
+    "notes": {"type": "string"}
+  }
+}

@@ -1,0 +1,10 @@
+schema_version: 1
+id: together
+label: Together AI
+adapter: openai
+integration: external
+kind: serverless-host
+regions: [us]
+residency: {jurisdictions: [us]}
+credentials: [api_key, base_url]
+pricing_page: ""

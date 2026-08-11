@@ -1,0 +1,91 @@
+{
+  "feeds": {
+    "litellm": {
+      "fetched_at": "2026-07-29",
+      "file": "litellm_prices.jsonl",
+      "kept_fields": [
+        "key",
+        "litellm_provider",
+        "mode",
+        "max_input_tokens",
+        "max_output_tokens",
+        "input_cost_per_token",
+        "output_cost_per_token",
+        "cache_read_input_token_cost",
+        "cache_creation_input_token_cost",
+        "supports_function_calling",
+        "supports_vision",
+        "supports_reasoning",
+        "supports_response_schema",
+        "supports_prompt_caching",
+        "supports_pdf_input",
+        "deprecation_date"
+      ],
+      "kept_records": 2261,
+      "kept_rule": "mode in {chat, completion, responses} AND input_cost_per_token present; image/embedding/rerank/audio modes are priced per image or per second and do not fit the per_token regime",
+      "license": "MIT",
+      "license_note": "MIT for everything outside the enterprise/ directory; this file is at the repository root. Verified against the LICENSE file on 2026-07-29.",
+      "license_url": "https://github.com/BerriAI/litellm/blob/main/LICENSE",
+      "units": "USD per token (scaled to USD per 1M in feeds.offering_from_litellm)",
+      "upstream": "BerriAI/litellm",
+      "upstream_records": 2984,
+      "upstream_sha256": "af3e192b7dc79c80e7021d319b7c16a25188dff7275d20b1fe32f6f4a1151c56",
+      "url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+    },
+    "models_dev": {
+      "capability_note": "models.dev publishes SUPPORT booleans (tool_call, reasoning, structured_output, attachment), not per-query_category quality. The capability scores in the model YAMLs and in CapabilityMatrix are NOT derivable from it.",
+      "carries_capability_scores": false,
+      "fetched_at": "2026-07-29",
+      "file": "modelsdev_models.jsonl",
+      "kept_fields": [
+        "provider",
+        "id",
+        "name",
+        "family",
+        "attachment",
+        "reasoning",
+        "tool_call",
+        "structured_output",
+        "knowledge",
+        "release_date",
+        "last_updated",
+        "modalities",
+        "limit",
+        "cost",
+        "open_weights",
+        "status"
+      ],
+      "kept_records": 5892,
+      "kept_rule": "every model of every provider",
+      "license": "MIT",
+      "license_note": "MIT, verified via the GitHub licence API against the LICENSE file on the repository's default branch (`dev`, not `main`) on 2026-07-29.",
+      "license_url": "https://github.com/anomalyco/models.dev/blob/dev/LICENSE",
+      "units": "USD per 1M tokens",
+      "upstream": "anomalyco/models.dev",
+      "upstream_providers": 175,
+      "upstream_records": 5892,
+      "upstream_sha256": "240bfb07757e35c3ddb3b05bb283c88a234bde12ab7f3c5791f4e83f3b2c5b04",
+      "url": "https://models.dev/api.json"
+    }
+  },
+  "fetched_at": "2026-07-29",
+  "generated_by": "scripts/refresh_price_feeds.py",
+  "rejected": {
+    "aws_spot_advisor": {
+      "disposition": "Adapter only: ace.fleetfeeds.SpotAdvisorPriors parses an operator-supplied local copy. Not wired into ace.spot yet \u2014 see that module's note.",
+      "finding": "The endpoint is unauthenticated and returns 200 (34 regions, 1,192 instance types, {'s': savings_pct, 'r': interruption-range index} per pool), but AWS publishes no licence with it; it is site content under the AWS Site Terms, which do not grant redistribution. Same disposition as SkyPilot, for the same reason.",
+      "license": "NONE STATED",
+      "url": "https://spot-bid-advisor.s3.amazonaws.com/spot-advisor-data.json",
+      "verified_on": "2026-07-29"
+    },
+    "skypilot_catalog": {
+      "disposition": "Adapter only, no vendored bytes: ace.fleetfeeds.SkyPilotCatalog parses an operator-supplied local vms.csv. Tests run against a synthetic fixture we wrote.",
+      "finding": "skypilot-org/skypilot-catalog has no LICENSE, COPYING or NOTICE file anywhere in its tree (257 paths, checked via the GitHub trees API), and the GitHub licence API reports null. The skypilot-org/skypilot ENGINE repo is Apache-2.0, but that is a separate repository and its licence does not extend here. Unlicensed by default means all rights reserved, so the bytes are not redistributable inside an MIT repo.",
+      "license": "NONE FOUND",
+      "url": "https://raw.githubusercontent.com/skypilot-org/skypilot-catalog/master/catalogs/v8/{cloud}/vms.csv",
+      "verified_facts": "Refresh cadence IS documented and is every 7 hours. v1-v8 all resolve, but the README states only v7 and v8 are still updated periodically, so v5/v6 returning 200 is a stale file, not a live one. v8 is the version to use if you use any.",
+      "verified_on": "2026-07-29"
+    }
+  },
+  "schema_version": 1
+}

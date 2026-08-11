@@ -1,0 +1,10 @@
+schema_version: 1
+id: anthropic
+label: Anthropic (first-party API)
+adapter: anthropic          # IMPLEMENTED in ace.gateway.providers (Messages API, full translation)
+integration: implemented
+kind: first-party
+regions: [global]
+residency: {zero_retention_available: true, certs: [SOC2]}
+credentials: [api_key]
+pricing_page: ""            # UNVERIFIED - fill in before the staleness gate escalates

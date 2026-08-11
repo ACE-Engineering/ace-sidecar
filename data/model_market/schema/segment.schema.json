@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acefleet.dev/schema/model_market/segment.schema.json",
+  "title": "Model Market Matrix - workload segments",
+  "description": "Named regions of the (query_category x profile x complexity) grid. A segment is a VIEW: it exists for dashboards, docs and per-segment policy defaults. pick() never reads segments - they are not a routing primitive.",
+  "type": "object",
+  "required": ["schema_version", "workload_segments"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "workload_segments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "select"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string"},
+          "select": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "query_categories": {
+                "type": "array",
+                "items": {
+                  "enum": ["code", "math", "reasoning", "qa", "extraction", "summarization",
+                           "translation", "chat", "vision", "ocr", "long_context"]
+                }
+              },
+              "profiles": {
+                "type": "array",
+                "items": {"enum": ["agentic", "interactive", "realtime", "longctx", "batch"]}
+              },
+              "complexity": {
+                "type": "array",
+                "items": {"enum": ["simple", "medium", "hard"]}
+              }
+            }
+          },
+          "boards": {"type": "array", "items": {"type": "string"}},
+          "quality_floor": {"type": "number", "minimum": 0, "maximum": 1},
+          "requires": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ttft_p95_ms": {"type": "number", "minimum": 0},
+              "min_context": {"type": "integer", "minimum": 1}
+            }
+          },
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  }
+}

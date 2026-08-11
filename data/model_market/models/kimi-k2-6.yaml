@@ -1,0 +1,51 @@
+schema_version: 1
+id: Kimi-K2.6
+family: kimi
+kind: vendor
+status: active
+modalities: [text]
+confidence: asserted        # capability is operator-authored, not evaluated — see notes
+
+# Moonshot Kimi K2.6 as served on Azure AI Foundry — the middle rung of the demo ladder and
+# the one that makes the demo interesting: at $0.95/$4.00 against gpt-5's $1.25/$10.00 it
+# wins the HIGH intelligence tier on cost while staying capable enough to serve it. A
+# high-complexity demo prompt routes here, which is the router escalating *and* saving in
+# the same decision.
+#
+# `id` carries the exact casing the Azure resource serves ("Kimi-K2.6"), because that string
+# has to match the fleet's model name for the local candidate filter to hit it. Distinct
+# from the kimi-k3 catalog entry, which is a different, later model.
+
+# Ported verbatim from CapabilityMatrix.default() in llm_router/core.py.
+capability:
+  chat:          {score: 0.92, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  qa:            {score: 0.92, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  extraction:    {score: 0.91, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  summarization: {score: 0.91, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  code:          {score: 0.94, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  math:          {score: 0.93, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  reasoning:     {score: 0.93, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  translation:   {score: 0.88, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  ocr:           {score: 0.60, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  vision:        {score: 0.60, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  long_context:  {score: 0.88, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+
+offerings:
+  # Azure AI Foundry lists a $0.16/1M CACHED-input rate as well. Deliberately not encoded:
+  # this is a prompt:completion table, and a provider-side prefix-cache discount is not what
+  # ACE's semantic cache does — a HIT is served from ACE's own store at zero upstream cost.
+  # Folding it in would understate the real per-token price on every uncached request. Same
+  # reasoning as the ACE_PRICE_TABLE comment in environments/demo/config.env.
+  - provider: azure
+    pricing: {kind: per_token, in: 0.95, out: 4.0, unit: usd_per_1m}
+    context: 256000
+    regions: [us-east]
+    as_of: "2026-07-26"
+    source: "https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/"
+
+provenance: operator-supplied
+notes: >-
+  Price is the vendor list rate the demo is billed at; capability is operator-authored and
+  UNVERIFIED (design section 11, weakness 1).
+
+updated: "2026-07-26"

@@ -1,0 +1,55 @@
+schema_version: 1
+id: gemini-3.1-pro
+family: gemini
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted
+
+capability:
+  reasoning:
+    score: 0.941
+    basis: published
+    boards: [gpqa-diamond]
+    as_of: "2026-07-23"
+    source: "https://artificialanalysis.ai/evaluations/gpqa-diamond"
+    measurements:
+      - board: gpqa-diamond
+        raw: 94.1
+        unit: pct
+        self_reported: false
+        source: "https://artificialanalysis.ai/evaluations/gpqa-diamond"
+        as_of: "2026-07-23"
+  math:         {score: 0.95, basis: operator-ranking, boards: [aime-2026, math-500, livebench-math], as_of: "2026-07-21", source: ""}
+  long_context: {score: 0.95, basis: operator-ranking, boards: [long-context-retrieval, needle-in-a-haystack], as_of: "2026-07-21", source: ""}
+  qa:           {score: 0.88, basis: operator-ranking, boards: [mmlu-pro, lmsys-arena-elo], as_of: "2026-07-21", source: ""}
+  chat:         {score: 0.88, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  longctx: {basis: assumed, boards: [needle-in-a-haystack]}
+
+offerings:
+  - provider: google-vertex
+    pricing: {kind: per_token, in: 2.0, cached_in: 0.20, out: 12.0, unit: usd_per_1m}
+    regions: [us-central1, europe-west4]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  Only offering is on a PLANNED adapter (google-vertex), so this model is currently
+  UNREACHABLE. That is exactly the global-vs-local gap the router reports (design section 7).
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 46
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+    model_variant: "leaderboard value; a preview variant showed 57 in search — verify"

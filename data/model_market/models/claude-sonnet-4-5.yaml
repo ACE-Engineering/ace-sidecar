@@ -1,0 +1,20 @@
+schema_version: 1
+id: claude-sonnet-4-5
+family: claude
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted   # no capability evidence yet; price is cited
+offerings:
+  - provider: anthropic
+    pricing: {kind: per_token, in: 3.0, out: 15.0, cached_in: 0.3, unit: usd_per_1m}
+    context: 200000
+    regions: [global]
+    as_of: "2026-07-28"
+    source: "https://platform.claude.com/docs/en/about-claude/pricing"
+provenance: vendor-doc
+updated: "2026-07-23"
+references:
+  - title: "anthropic official pricing"
+    url: "https://platform.claude.com/docs/en/about-claude/pricing"
+    as_of: "2026-07-23"

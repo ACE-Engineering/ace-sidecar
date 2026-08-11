@@ -1,0 +1,10 @@
+schema_version: 1
+id: google
+label: Google Gemini API (first-party)
+adapter: openai            # Gemini exposes an OpenAI-compatible endpoint; reachable via base_url
+integration: external
+kind: first-party
+regions: [global]
+residency: {jurisdictions: [us, eu], zero_retention_available: true, certs: [SOC2, ISO27001]}
+credentials: [api_key, base_url]
+pricing_page: "https://ai.google.dev/gemini-api/docs/pricing"

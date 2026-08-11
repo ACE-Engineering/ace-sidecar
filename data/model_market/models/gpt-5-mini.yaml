@@ -1,0 +1,55 @@
+schema_version: 1
+id: gpt-5-mini
+family: gpt-5
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted        # capability is operator-authored, not evaluated — see notes
+
+# WHY THIS ENTRY EXISTS, separately from gpt-5.4-mini: this is the model name the DEMO
+# deployment's Azure resource actually serves (environments/demo/fleet.yaml), not the
+# current OpenAI-direct SKU. Aliasing it onto gpt-5.4-mini would price demo traffic at
+# $0.75/$4.50 when it really bills at $0.25/$2.00 — a 3x misreport on every number the
+# public console displays. Same model family, different purchase.
+
+# Ported verbatim from the hand-authored CapabilityMatrix.default() in
+# llm_router/core.py, which is what the demo has always routed on. Recorded here as
+# `operator-ranking` rather than promoted to `measured`: moving the numbers into YAML
+# does not make them evidence, and mislabelling their basis is exactly what
+# `confidence: asserted` exists to prevent.
+capability:
+  chat:          {score: 0.88, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  qa:            {score: 0.88, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  extraction:    {score: 0.89, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  summarization: {score: 0.88, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  code:          {score: 0.86, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  math:          {score: 0.84, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  reasoning:     {score: 0.84, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  translation:   {score: 0.86, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  ocr:           {score: 0.78, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  vision:        {score: 0.82, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  long_context:  {score: 0.82, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+
+offerings:
+  # Azure v1 surface — the demo's only provider. Price matches ACE_PRICE_TABLE in
+  # environments/demo/config.env exactly; if one moves the other must, or the console's
+  # routing explanation and its billed cost_usd stop agreeing.
+  #
+  # No `latency:` block. The schema carries ttft_p50_ms / tok_per_s and nothing in this
+  # catalog populates them (design section 10, P6 — TTFT calibration deferred until there
+  # is traffic to calibrate from). Omitted rather than estimated: the console renders a
+  # missing latency as "not measured", which is true, and would render a guess as fact.
+  - provider: azure
+    pricing: {kind: per_token, in: 0.25, out: 2.0, unit: usd_per_1m}
+    context: 400000
+    regions: [us-east]
+    as_of: "2026-07-26"
+    source: "https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/"
+
+provenance: operator-supplied
+notes: >-
+  The cheap rung of the demo's three-model Azure ladder. Price is the vendor list rate the
+  demo is billed at; capability is operator-authored and UNVERIFIED (design section 11,
+  weakness 1).
+
+updated: "2026-07-26"

@@ -1,0 +1,40 @@
+# Expected OUTPUT tokens per (query_category, profile). Feeds the expected-dollar cost
+# model: expected_usd = prompt_tok*price_in + est_out_tok*price_out.
+#
+# STATUS: hand-estimated. These were to be calibrated from request_log.tokens_out, but
+# request_log is empty as of 2026-07-22 (design section 13).
+#
+# How much this matters, honestly: section 5's dominance check found 0 of 55 model pairs
+# non-dominated in the current price set, so these priors do NOT change WHICH model is
+# picked - only the dollar figure reported. They become decision-relevant only if the
+# catalog grows to contain crossover pairs, which is what the dominance CI gate watches.
+schema_version: 1
+basis: assumed
+
+default: 400
+
+by_query_category:
+  extraction:    120
+  translation:   200
+  summarization: 250
+  qa:            200
+  chat:          300
+  code:          600
+  math:          800
+  reasoning:    1200
+  vision:        300
+  ocr:           400
+  long_context:  600
+
+# Multipliers applied on top of the per-category prior.
+by_profile:
+  agentic:     1.8    # tool-call loops emit many short turns
+  batch:       1.0
+  interactive: 1.0
+  realtime:    0.6    # latency-sensitive callers cap output
+  longctx:     1.2
+
+by_complexity:
+  simple: 0.6
+  medium: 1.0
+  hard:   1.8

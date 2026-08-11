@@ -1,0 +1,34 @@
+schema_version: 1
+id: claude-opus-4-5
+family: claude
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted   # no capability evidence yet; price is cited
+capability:
+  qa:
+    score: 0.895
+    basis: published
+    boards: [mmlu-pro]
+    as_of: "2026-07-23"
+    source: "https://artificialanalysis.ai/evaluations/mmlu-pro"
+    measurements:
+      - board: mmlu-pro
+        raw: 89.5
+        unit: pct
+        self_reported: false
+        source: "https://artificialanalysis.ai/evaluations/mmlu-pro"
+        as_of: "2026-07-23"
+offerings:
+  - provider: anthropic
+    pricing: {kind: per_token, in: 5.0, out: 25.0, cached_in: 0.5, unit: usd_per_1m}
+    context: 200000
+    regions: [global]
+    as_of: "2026-07-28"
+    source: "https://platform.claude.com/docs/en/about-claude/pricing"
+provenance: vendor-doc
+updated: "2026-07-23"
+references:
+  - title: "anthropic official pricing"
+    url: "https://platform.claude.com/docs/en/about-claude/pricing"
+    as_of: "2026-07-23"

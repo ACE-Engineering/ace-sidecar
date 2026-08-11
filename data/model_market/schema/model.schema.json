@@ -1,0 +1,491 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acefleet.dev/schema/model_market/model.schema.json",
+  "title": "Model Market Matrix - model entry",
+  "description": "One model the gateway can route TO. Capability belongs to the model (it is the same model wherever you buy it); cost, context, region and latency belong to each offering. See docs/modules/12-model-market-matrix.md.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "kind",
+    "offerings",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "family": {
+      "type": "string"
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "kind": {
+      "enum": [
+        "vendor",
+        "open_weight",
+        "custom"
+      ]
+    },
+    "status": {
+      "enum": [
+        "active",
+        "planned",
+        "deprecated"
+      ]
+    },
+    "modalities": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "text",
+          "vision",
+          "audio"
+        ]
+      }
+    },
+    "capability": {
+      "type": "object",
+      "description": "Axis 1: per query_category competence, 0..1. A category MAY be omitted - omission means 'no evidence', which is honest; pick() falls back to the chat score. Never invent a number to fill a gap.",
+      "propertyNames": {
+        "enum": [
+          "code",
+          "math",
+          "reasoning",
+          "qa",
+          "extraction",
+          "summarization",
+          "translation",
+          "chat",
+          "vision",
+          "ocr",
+          "long_context"
+        ]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "basis"
+        ],
+        "additionalProperties": false,
+        "description": "Two distinct things live here. `measurements` are the RAW published benchmark results (citable, per-board, on their own native scale). `score` is the DERIVED routing capability (0..1, comparable across categories) produced by normalizing those measurements - see market.normalize_capability. Raw % across boards are NOT comparable (65% SWE-bench != 88% MMLU in difficulty), so the router consumes `score`, never a raw number.",
+        "properties": {
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Normalized routing capability. Optional: absent until normalization runs, or when only raw measurements exist. pick() treats absence as 'no evidence'."
+          },
+          "basis": {
+            "enum": [
+              "published",
+              "vendor-reported",
+              "measured",
+              "operator-ranking",
+              "assumed"
+            ],
+            "description": "published = a real score from an independent public leaderboard. vendor-reported = from the model's own paper/card (self-reported, may be cherry-picked). measured = an in-house eval run (evidence_ref). operator-ranking = derived from a human shortlist position, NOT a benchmark. assumed = a guess."
+          },
+          "measurements": {
+            "type": "array",
+            "description": "Raw published results backing this capability. Each is one board's native score with its citation.",
+            "items": {
+              "type": "object",
+              "required": ["board", "raw", "source"],
+              "additionalProperties": false,
+              "properties": {
+                "board": {"type": "string", "description": "Key into benchmarks.yaml."},
+                "raw": {"type": "number", "description": "The score on the board's native scale (e.g. 80.6 for a percentage)."},
+                "unit": {"enum": ["pct", "elo", "index", "count"], "default": "pct"},
+                "self_reported": {"type": "boolean", "description": "true = vendor's own number; false = independent leaderboard."},
+                "model_variant": {"type": "string", "description": "The exact variant the number is for, when it differs from this entry's id (e.g. 'V4-Pro-Max')."},
+                "source": {"type": "string", "description": "Canonical URL. A measurement with no source is not admissible."},
+                "as_of": {"type": "string"}
+              }
+            }
+          },
+          "boards": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Deprecated shorthand for the board names in `measurements`. Retained for the existing operator-ranking rows; new entries use `measurements`."
+          },
+          "evidence_ref": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "capability_inherits": {
+      "type": "object",
+      "required": [
+        "from"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "delta": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "confidence": {
+      "enum": [
+        "measured",
+        "inherited",
+        "asserted"
+      ],
+      "description": "Gates routing. measured = full candidate. inherited = base categories only, with a haircut, never for complexity:hard. asserted = NOT a candidate; reachable only by explicit pin until an eval promotes it."
+    },
+    "profiles": {
+      "type": "object",
+      "description": "Axis 2: capability SHAPE, not topic. basis:assumed until request_log traffic exists - see design section 13.",
+      "propertyNames": {
+        "enum": [
+          "agentic",
+          "interactive",
+          "realtime",
+          "longctx",
+          "batch"
+        ]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "basis"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "enum": [
+              "measured",
+              "vendor-claim",
+              "assumed"
+            ]
+          },
+          "tool_call_reliability": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "stable_turns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ttft_p50_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "tok_per_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "effective_ctx": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "needle_recall": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "boards": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "offerings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "provider",
+          "pricing"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "pricing": {
+            "$ref": "#/$defs/pricing"
+          },
+          "context": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "residency": {
+            "oneOf": [
+              {
+                "const": "none"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "jurisdiction": {
+                    "type": "string"
+                  },
+                  "in_house": {
+                    "type": "boolean"
+                  },
+                  "zero_retention": {
+                    "type": "boolean"
+                  },
+                  "certs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "latency": {
+            "type": "object",
+            "required": [
+              "measured"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "ttft_p50_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "tok_per_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "measured": {
+                "type": "boolean"
+              }
+            }
+          },
+          "instance_type": {
+            "type": "string"
+          },
+          "replicas": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "quantization": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Canonical URL for the price. Empty means UNVERIFIED."
+          }
+        }
+      }
+    },
+    "provenance": {
+      "enum": [
+        "operator-supplied",
+        "vendor-doc",
+        "measured"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string",
+      "description": "ISO date this entry's facts were last checked against a source."
+    },
+    "references": {
+      "type": "array",
+      "description": "Web citations for this entry (leaderboards, model cards, papers).",
+      "items": {
+        "type": "object",
+        "required": ["url"],
+        "additionalProperties": false,
+        "properties": {
+          "url": {"type": "string"},
+          "title": {"type": "string"},
+          "as_of": {"type": "string"}
+        }
+      }
+    },
+    "benchmarks": {
+      "type": "array",
+      "description": "Model-level cited benchmark results (e.g. a composite index). Distinct from per-query_category capability: not thresholded by the router, carried as dated evidence.",
+      "items": {
+        "type": "object",
+        "required": ["board", "raw", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "board": {"type": "string"},
+          "raw": {"type": "number"},
+          "unit": {"enum": ["pct", "elo", "index", "count"]},
+          "self_reported": {"type": "boolean"},
+          "model_variant": {"type": "string"},
+          "source": {"type": "string"},
+          "as_of": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "pricing": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "description": "Discriminated on `kind`. Adding a regime is a new branch here plus a PricingRegime subclass - nothing else changes.",
+      "oneOf": [
+        {
+          "title": "per_token - metered list price (vendor APIs, and open-weight rented from a host)",
+          "required": [
+            "kind",
+            "in",
+            "out",
+            "unit"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "per_token"
+            },
+            "in": {
+              "type": "number",
+              "minimum": 0
+            },
+            "out": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cached_in": {
+              "type": "number",
+              "minimum": 0
+            },
+            "unit": {
+              "const": "usd_per_1m"
+            }
+          }
+        },
+        {
+          "title": "provisioned - own GPUs / PTU / Bedrock PT / Vertex GSU; $/1M is DERIVED",
+          "required": [
+            "kind",
+            "capacity_tps"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "provisioned"
+            },
+            "capacity_tps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "usd_per_hr": {
+              "type": "number",
+              "minimum": 0
+            },
+            "utilization": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        {
+          "title": "marginal_sunk - capacity already paid for; delegates to CostCurve",
+          "required": [
+            "kind",
+            "base_marginal",
+            "capacity_tps"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "marginal_sunk"
+            },
+            "base_marginal": {
+              "type": "number",
+              "minimum": 0
+            },
+            "capacity_tps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "knee_util": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "knee_penalty": {
+              "type": "number",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "title": "free_local - dev / on-prem where nobody bills",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "free_local"
+            },
+            "capacity_tps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "title": "unpriced - availability is known, price is not. Never invent a placeholder.",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unpriced"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+schema_version: 1
+id: fireworks
+label: Fireworks AI
+adapter: openai
+integration: external
+kind: serverless-host
+regions: [us, eu]
+residency: {jurisdictions: [us, eu]}
+credentials: [api_key, base_url]
+pricing_page: ""

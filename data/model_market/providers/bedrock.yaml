@@ -1,0 +1,11 @@
+schema_version: 1
+id: bedrock
+label: AWS Bedrock
+adapter: bedrock            # PLANNED - declared in PLANNED_PROVIDERS; SigV4 signer ready in ace.gateway.sigv4
+integration: planned
+kind: cloud
+regions: [us-east-1, us-west-2, eu-central-1, ap-northeast-1]
+residency: {jurisdictions: [us, eu, jp], zero_retention_available: true, certs: [SOC2, ISO27001, HIPAA, FedRAMP]}
+credentials: [access_key_id, secret_access_key, region]
+pricing_page: ""
+notes: Models offered here are NOT reachable until the adapter is registered.

@@ -1,0 +1,38 @@
+# Benchmark boards referenced by capability entries. This file is the provenance ledger:
+# every `boards:` value in models/*.yaml must resolve to a key here (enforced in CI).
+#
+# `source` is deliberately EMPTY for every board sourced from the operator's 2026-07
+# shortlist. An empty source means "nobody has pointed at the leaderboard this claim came
+# from yet" - the staleness gate nags until one is supplied. Filling these in is the
+# cheapest available upgrade to the KB's trustworthiness.
+schema_version: 1
+
+boards:
+  swe-bench-verified:   {label: "SWE-bench Verified", measures: [code], source: ""}
+  terminal-bench-2.1:   {label: "Terminal-Bench 2.1", measures: [code], source: ""}
+  livecodebench:        {label: "LiveCodeBench", measures: [code], source: ""}
+  gpqa-diamond:         {label: "GPQA Diamond", measures: [reasoning], source: ""}
+  lmsys-hard-prompts:   {label: "LMSYS Hard Prompts", measures: [reasoning], source: ""}
+  hle:                  {label: "Humanity's Last Exam", measures: [reasoning], source: ""}
+  aime-2026:            {label: "AIME 2025/2026", measures: [math], source: ""}
+  math-500:             {label: "MATH-500", measures: [math], source: ""}
+  livebench-math:       {label: "LiveBench Math", measures: [math], source: ""}
+  mmlu-pro:             {label: "MMLU-Pro", measures: [qa], source: ""}
+  lmsys-arena-elo:      {label: "LMSYS Text Arena Overall Elo", measures: [qa, chat], source: ""}
+  long-context-retrieval: {label: "Long Context Retrieval (LCR)", measures: [long_context], source: ""}
+  needle-in-a-haystack: {label: "Needle in a Haystack", measures: [long_context], source: ""}
+  osworld:              {label: "OSWorld", measures: [vision], source: ""}
+  browsecomp:           {label: "BrowseComp", measures: [vision], source: ""}
+  tau3-bench:           {label: "tau^3-Bench / AutoBench", measures: [reasoning], source: ""}
+  artificial-analysis-price-performance:
+    {label: "Artificial Analysis Price-Performance", measures: [chat], source: ""}
+  ruler:                {label: "RULER", measures: [long_context], source: ""}
+  aa-intelligence-index:
+    label: "Artificial Analysis Intelligence Index (v4.1 composite)"
+    measures: [reasoning, code, math, qa]   # a COMPOSITE, not a single category
+    source: "https://artificialanalysis.ai/evaluations/artificial-analysis-intelligence-index"
+    as_of: "2026-07-23"
+    note: >-
+      Independent composite of 9 evaluations (GPQA Diamond, Terminal-Bench 2.1, HLE,
+      SciCode, tau^3, AA-LCR, ...). Model-level signal, attached under a model's
+      `benchmarks:`, never used as a per-query_category capability score.

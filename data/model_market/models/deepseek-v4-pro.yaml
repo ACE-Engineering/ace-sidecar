@@ -1,0 +1,60 @@
+schema_version: 1
+id: deepseek-v4-pro
+family: deepseek
+kind: open_weight
+status: active
+modalities: [text]
+confidence: asserted
+
+capability:
+  code:          {score: 0.88, basis: operator-ranking, boards: [swe-bench-verified, livecodebench], as_of: "2026-07-21", source: ""}
+  extraction:    {score: 0.88, basis: operator-ranking, boards: [artificial-analysis-price-performance], as_of: "2026-07-21", source: ""}
+  summarization: {score: 0.88, basis: operator-ranking, as_of: "2026-07-21", source: ""}
+  chat:          {score: 0.85, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  realtime: {basis: assumed}
+  batch:    {basis: assumed}
+
+# The same open-weight model bought three ways: identical capability, different cost,
+# context and residency. This is the split that makes the KB a matrix and not a list.
+offerings:
+  - provider: deepseek-direct
+    pricing: {kind: per_token, in: 0.435, out: 0.87, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+  - provider: fireworks
+    pricing: {kind: unpriced}   # host listed by the operator; NO price was supplied
+    regions: [us, eu]
+    residency: {jurisdiction: us}
+    as_of: "2026-07-21"
+    source: ""
+  - provider: together
+    pricing: {kind: unpriced}   # host listed by the operator; NO price was supplied
+    regions: [us]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  Listed as the most cost-effective pick for agentic coding AND for real-time pipelines.
+  Fireworks/Together prices are placeholders at parity - they were not in the operator table
+  and MUST be replaced with quoted figures before any savings claim rests on them.
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+  - title: "Artificial Analysis — DeepSeek V4 Pro"
+    url: "https://artificialanalysis.ai/models/deepseek-v4-pro"
+    as_of: "2026-07-23"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 44
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+    model_variant: "DeepSeek V4 Pro (max)"

@@ -1,0 +1,41 @@
+schema_version: 1
+id: gpt-5
+family: gpt-5
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted        # capability is operator-authored, not evaluated — see notes
+
+# The flagship rung of the DEMO deployment's Azure ladder (environments/demo/fleet.yaml).
+# Filename is gpt-5-demo.yaml because `id` is what the loader keys on, and a bare gpt-5.yaml
+# would read as the canonical OpenAI SKU — which this is not. See gpt-5-mini.yaml for why
+# the demo's served names are catalogued separately from the gpt-5.x entries.
+
+# Ported verbatim from CapabilityMatrix.default() in llm_router/core.py.
+capability:
+  chat:          {score: 0.95, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  qa:            {score: 0.95, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  extraction:    {score: 0.94, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  summarization: {score: 0.94, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  code:          {score: 0.96, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  math:          {score: 0.96, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  reasoning:     {score: 0.97, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  translation:   {score: 0.93, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  ocr:           {score: 0.90, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  vision:        {score: 0.94, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+  long_context:  {score: 0.92, basis: operator-ranking, as_of: "2026-07-26", source: ""}
+
+offerings:
+  - provider: azure
+    pricing: {kind: per_token, in: 1.25, out: 10.0, unit: usd_per_1m}
+    context: 400000
+    regions: [us-east]
+    as_of: "2026-07-26"
+    source: "https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/"
+
+provenance: operator-supplied
+notes: >-
+  Price is the vendor list rate the demo is billed at (matches ACE_PRICE_TABLE in
+  environments/demo/config.env); capability is operator-authored and UNVERIFIED.
+
+updated: "2026-07-26"

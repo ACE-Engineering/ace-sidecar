@@ -1,0 +1,52 @@
+schema_version: 1
+id: claude-fable-5
+family: claude
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted        # no eval run in-repo; see notes
+
+# Axis 1. Every score below is basis:operator-ranking - derived from WHERE the operator's
+# 2026-07 shortlist placed this model, NOT from a benchmark score we hold. 0.95 = listed
+# as a top performer for that segment; 0.88 = listed as the cheap/cost-effective pick.
+# Categories the shortlist says nothing about are OMITTED rather than invented.
+capability:
+  code:       {score: 0.95, basis: operator-ranking, boards: [swe-bench-verified, terminal-bench-2.1, livecodebench], as_of: "2026-07-21", source: ""}
+  reasoning:  {score: 0.95, basis: operator-ranking, boards: [gpqa-diamond, lmsys-hard-prompts, hle], as_of: "2026-07-21", source: ""}
+  qa:         {score: 0.95, basis: operator-ranking, boards: [mmlu-pro, lmsys-arena-elo], as_of: "2026-07-21", source: ""}
+  vision:     {score: 0.95, basis: operator-ranking, boards: [osworld, browsecomp], as_of: "2026-07-21", source: ""}
+  chat:       {score: 0.90, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  agentic:  {basis: assumed, boards: [tau3-bench, osworld]}
+
+offerings:
+  - provider: anthropic
+    pricing: {kind: per_token, in: 10.0, out: 50.0, cached_in: 1.0, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-28"
+    source: "https://platform.claude.com/docs/en/about-claude/pricing"
+  - provider: bedrock
+    pricing: {kind: per_token, in: 10.0, out: 50.0, unit: usd_per_1m}
+    regions: [us-east-1, us-west-2, eu-central-1]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  The Anthropic first-party price is vendor-confirmed (claude.com/pricing, 2026-07-24). The
+  Bedrock price and all capability rankings remain operator-supplied and independently
+  UNVERIFIED (design section 11, weakness 1).
+
+updated: "2026-07-24"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 60
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"

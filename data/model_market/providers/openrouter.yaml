@@ -1,0 +1,12 @@
+schema_version: 1
+id: openrouter
+label: OpenRouter
+adapter: openai
+integration: external
+kind: aggregator
+regions: [global]
+credentials: [api_key, base_url]
+pricing_page: ""
+notes: >-
+  An aggregator fronts other hosts, so its price and latency are a moving target and its
+  residency guarantees are inherited, not its own. Prefer a direct offering when one exists.

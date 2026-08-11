@@ -1,0 +1,50 @@
+schema_version: 1
+id: kimi-k3
+family: kimi
+kind: vendor
+status: active
+modalities: [text]
+confidence: asserted
+
+capability:
+  reasoning:
+    score: 0.935
+    basis: published
+    boards: [gpqa-diamond]
+    as_of: "2026-07-23"
+    source: "https://artificialanalysis.ai/evaluations/gpqa-diamond"
+    measurements:
+      - board: gpqa-diamond
+        raw: 93.5
+        unit: pct
+        self_reported: false
+        source: "https://artificialanalysis.ai/evaluations/gpqa-diamond"
+        as_of: "2026-07-23"
+  chat:      {score: 0.85, basis: assumed, as_of: "2026-07-21", source: ""}
+
+offerings:
+  - provider: moonshot
+    pricing: {kind: per_token, in: 3.0, out: 15.0, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+  - provider: openrouter
+    pricing: {kind: per_token, in: 3.0, out: 15.0, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 57
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"

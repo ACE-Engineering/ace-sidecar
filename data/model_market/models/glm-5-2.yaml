@@ -1,0 +1,42 @@
+schema_version: 1
+id: glm-5.2
+family: glm
+kind: open_weight
+status: active
+modalities: [text]
+confidence: asserted
+
+capability:
+  chat:          {score: 0.85, basis: operator-ranking, boards: [artificial-analysis-price-performance], as_of: "2026-07-21", source: ""}
+  summarization: {score: 0.85, basis: operator-ranking, as_of: "2026-07-21", source: ""}
+
+profiles:
+  realtime: {basis: assumed, boards: [artificial-analysis-price-performance]}
+
+offerings:
+  - provider: zhipu
+    pricing: {kind: per_token, in: 1.40, out: 4.40, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+  - provider: openrouter
+    pricing: {kind: per_token, in: 1.40, out: 4.40, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 51
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+    model_variant: "GLM-5.2 (max)"

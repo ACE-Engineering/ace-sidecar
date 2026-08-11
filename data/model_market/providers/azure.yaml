@@ -1,0 +1,13 @@
+schema_version: 1
+id: azure
+label: Azure OpenAI
+adapter: azure              # IMPLEMENTED (OpenAI schema, api-key auth)
+integration: implemented
+kind: cloud
+regions: [us-east, us-west, eu-central, uk-south, japan-east]
+residency: {jurisdictions: [us, eu, uk, jp], zero_retention_available: true, certs: [SOC2, ISO27001, HIPAA]}
+credentials: [api_key, endpoint, deployment, api_version]
+pricing_page: ""
+notes: >-
+  Offers both metered on-demand and PTU (committed throughput). PTU capacity should be
+  modelled as a marginal_sunk offering, not per_token - see design section 5.

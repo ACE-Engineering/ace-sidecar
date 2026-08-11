@@ -1,0 +1,46 @@
+schema_version: 1
+id: claude-opus-4-8
+family: claude
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted
+
+capability:
+  code:         {score: 0.95, basis: operator-ranking, boards: [swe-bench-verified, terminal-bench-2.1], as_of: "2026-07-21", source: ""}
+  long_context: {score: 0.95, basis: operator-ranking, boards: [long-context-retrieval, needle-in-a-haystack], as_of: "2026-07-21", source: ""}
+  chat:         {score: 0.90, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  agentic: {basis: assumed}
+  longctx: {basis: assumed, boards: [long-context-retrieval]}
+
+offerings:
+  - provider: anthropic
+    pricing: {kind: per_token, in: 5.0, out: 25.0, cached_in: 0.50, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-28"
+    source: "https://platform.claude.com/docs/en/about-claude/pricing"
+  - provider: bedrock
+    pricing: {kind: per_token, in: 5.0, out: 25.0, unit: usd_per_1m}
+    regions: [us-east-1, eu-central-1]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  Anthropic first-party price vendor-confirmed (claude.com/pricing, 2026-07-24). Bedrock
+  price and capability rankings remain operator-supplied and UNVERIFIED.
+
+updated: "2026-07-24"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 56
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"

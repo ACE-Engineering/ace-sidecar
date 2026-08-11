@@ -1,0 +1,43 @@
+schema_version: 1
+id: claude-sonnet-5
+family: claude
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted
+
+capability:
+  vision: {score: 0.88, basis: operator-ranking, boards: [osworld, browsecomp, tau3-bench], as_of: "2026-07-21", source: ""}
+  code:   {score: 0.88, basis: operator-ranking, as_of: "2026-07-21", source: ""}
+  chat:   {score: 0.88, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  agentic: {basis: assumed, boards: [osworld, tau3-bench]}
+
+offerings:
+  - provider: anthropic
+    # INTRODUCTORY pricing, in effect through 2026-08-31; reverts to standard 3.0/15.0
+    # (cache read 0.30) on 2026-09-01 — update this offering then.
+    pricing: {kind: per_token, in: 2.0, out: 10.0, cached_in: 0.20, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-28"
+    source: "https://platform.claude.com/docs/en/about-claude/pricing"
+
+provenance: vendor-doc
+notes: >-
+  Listed as the most cost-effective pick for computer-use / UI automation. Price is the
+  Anthropic INTRODUCTORY rate ($2/$10 in/out, $0.20 cache read) through 2026-08-31; standard
+  pricing of $3/$15 ($0.30 cache read) takes effect 2026-09-01.
+
+updated: "2026-07-24"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 53
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"

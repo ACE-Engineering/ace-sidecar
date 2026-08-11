@@ -1,0 +1,63 @@
+schema_version: 1
+id: gpt-5.6-sol
+family: gpt-5
+aliases: [gpt-5.6-sol]
+kind: vendor
+status: active
+modalities: [text, vision]
+confidence: asserted
+
+capability:
+  reasoning:
+    score: 0.941
+    basis: published
+    boards: [gpqa-diamond]
+    as_of: "2026-07-23"
+    source: "https://artificialanalysis.ai/evaluations/gpqa-diamond"
+    measurements:
+      - board: gpqa-diamond
+        raw: 94.1
+        unit: pct
+        self_reported: false
+        source: "https://artificialanalysis.ai/evaluations/gpqa-diamond"
+        as_of: "2026-07-23"
+  math:      {score: 0.95, basis: operator-ranking, boards: [aime-2026, math-500, livebench-math], as_of: "2026-07-21", source: ""}
+  code:      {score: 0.95, basis: operator-ranking, boards: [swe-bench-verified], as_of: "2026-07-21", source: ""}
+  qa:        {score: 0.95, basis: operator-ranking, boards: [mmlu-pro], as_of: "2026-07-21", source: ""}
+  vision:    {score: 0.88, basis: operator-ranking, boards: [osworld, browsecomp], as_of: "2026-07-21", source: ""}
+  chat:      {score: 0.90, basis: assumed, as_of: "2026-07-21", source: ""}
+
+profiles:
+  agentic: {basis: assumed}
+
+offerings:
+  - provider: openai
+    pricing: {kind: per_token, in: 5.0, out: 30.0, unit: usd_per_1m}
+    regions: [global]
+    as_of: "2026-07-21"
+    source: ""
+  - provider: azure
+    pricing: {kind: per_token, in: 5.0, out: 30.0, unit: usd_per_1m}
+    regions: [us-east, eu-central]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  NOTE: `id` collides by longest-prefix with the existing `gpt-5` entry in
+  data/model_tiers.yaml. The zero-overlap finding in design section 12 treated that prefix
+  match as spurious; keep the two catalogs' ids distinct when model_tiers.yaml is folded in.
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+benchmarks:
+  - board: aa-intelligence-index
+    raw: 59
+    unit: index
+    self_reported: false
+    source: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
+    model_variant: "GPT-5.6 Sol (max)"

@@ -1,0 +1,66 @@
+# Workload segments — named regions of the (query_category x profile x complexity) grid.
+#
+# These are the operator's 2026-07 market categories, expressed as VIEWS over the grid
+# rather than as a competing taxonomy. A segment is never a routing primitive: pick()
+# does not read this file. It exists for dashboards, docs, and per-segment policy
+# defaults. See design section 2.
+schema_version: 1
+
+workload_segments:
+  agentic_coding:
+    label: "Agentic Coding & Software Engineering"
+    select: {query_categories: [code], profiles: [agentic]}
+    boards: [swe-bench-verified, terminal-bench-2.1, livecodebench]
+    quality_floor: 0.80
+    notes: >-
+      "Agentic" is a request-SHAPE property, not a topic - the same prompt is `code`
+      whether it is a one-shot snippet or a 40-turn loop. That is why it lives on the
+      profile axis. The profile trigger is unvalidated; see design section 13.
+
+  complex_reasoning:
+    label: "Complex Reasoning & Hard Prompts"
+    select: {query_categories: [reasoning], complexity: [hard]}
+    boards: [gpqa-diamond, lmsys-hard-prompts, hle]
+    quality_floor: 0.80
+
+  mathematics:
+    label: "Mathematics & Formal Logic"
+    select: {query_categories: [math]}
+    boards: [aime-2026, math-500, livebench-math]
+    quality_floor: 0.80
+
+  general_multimodal_qa:
+    label: "General Knowledge & Multimodal QA"
+    select: {query_categories: [qa, vision, ocr]}
+    boards: [mmlu-pro, lmsys-arena-elo]
+    quality_floor: 0.65
+
+  high_context_analysis:
+    label: "High-Context & Long Document Analysis"
+    select: {query_categories: [long_context], profiles: [longctx]}
+    boards: [long-context-retrieval, needle-in-a-haystack]
+    quality_floor: 0.80
+    requires: {min_context: 100000}
+
+  computer_use:
+    label: "Computer Use & Work Automation"
+    select: {query_categories: [vision, reasoning], profiles: [agentic]}
+    boards: [osworld, browsecomp, tau3-bench]
+    quality_floor: 0.80
+    notes: >-
+      Has no trainable text signal - OSWorld/BrowseComp are trajectories, not prompts.
+      This segment is reachable ONLY through the profile axis, which is the clearest
+      case for why axis 2 exists.
+
+  realtime_pipelines:
+    label: "High-Efficiency & Real-Time Pipelines"
+    select:
+      query_categories: [extraction, summarization, translation, chat]
+      profiles: [realtime]
+    boards: [artificial-analysis-price-performance]
+    quality_floor: 0.55
+    requires: {ttft_p95_ms: 400}
+    notes: >-
+      The four cheapest-to-serve categories. The operator table collapsed these into one
+      bucket; keeping them separate here is what preserves the ability to route
+      extraction differently from chat - the highest-volume savings lever.

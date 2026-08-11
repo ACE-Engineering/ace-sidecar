@@ -1,0 +1,77 @@
+schema_version: 1
+id: llama-3-70b
+family: llama-3
+aliases: ["meta-llama/Meta-Llama-3-70B-Instruct"]
+kind: open_weight
+status: active
+modalities: [text]
+confidence: asserted
+
+# Worked example of the point of the three-layer split (design section 3): capability is
+# stated ONCE, and the same model is then priced three completely different ways depending
+# on how it is bought. No per-host capability duplication, no parallel schema for
+# self-hosted models.
+capability:
+  chat:          {score: 0.80, basis: assumed, as_of: "2026-07-21", source: ""}
+  extraction:    {score: 0.80, basis: assumed, as_of: "2026-07-21", source: ""}
+  summarization: {score: 0.80, basis: assumed, as_of: "2026-07-21", source: ""}
+
+offerings:
+  # 1. COMMITTED capacity already paid for (Azure PTU). Marginal cost is ~0 up to the
+  #    utilization knee, then it explodes - CostCurve.effective_marginal_cost already
+  #    implements exactly this shape (ace/model.py). Mirrors fleet.yaml `azure-ptu-eu`.
+  - provider: self-hosted
+    destination_id: azure-ptu-eu
+    pricing:
+      kind: marginal_sunk
+      base_marginal: 0.10        # $/1k tokens, from fleet.yaml - DECLARED, not measured
+      capacity_tps: 2000         # from fleet.yaml - DECLARED, not measured
+      knee_util: 0.80
+      knee_penalty: 4.0
+    instance_type: azure.nd-h100-v5
+    context: 8192
+    regions: [eu-central]
+    residency: {jurisdiction: eu, in_house: true, zero_retention: true}
+    as_of: "2026-07-21"
+    source: "fleet.yaml#azure-ptu-eu"
+
+  # 2. OWN hardware, no commitment: $/1M is DERIVED from the ace.hardware instance price
+  #    divided by achieved throughput. Nothing here is a quoted price.
+  - provider: self-hosted
+    destination_id: onprem-h100-a
+    pricing:
+      kind: provisioned
+      capacity_tps: 4200
+      utilization: 0.65
+    instance_type: aws.p5.48xlarge
+    replicas: 2
+    quantization: fp8
+    context: 8192
+    regions: [on-prem]
+    residency: {jurisdiction: us, in_house: true, zero_retention: true}
+    as_of: "2026-07-21"
+    source: ""
+
+  # 3. Rented from a serverless host. An open-weight model bought this way needs NO new
+  #    machinery at all - it is an ordinary metered offering. The operator shortlist names
+  #    the host but quoted no price, so it is `unpriced`: reachable, never rankable.
+  - provider: fireworks
+    pricing: {kind: unpriced}   # host listed by the operator; NO price was supplied
+    context: 8192
+    regions: [us, eu]
+    as_of: "2026-07-21"
+    source: ""
+
+provenance: operator-supplied
+notes: >-
+  capacity_tps and base_marginal come from fleet.yaml, where they are DECLARED modelling
+  parameters rather than measurements - the same caveat hardware_profiles.yaml states about
+  itself. A $/1M derived from a hand-typed throughput number looks precise and can be wrong;
+  design section 11, weakness 5. ace.hardware instance prices are likewise marked
+  "indicative" in-code, and they are the denominator of every derived figure here.
+
+updated: "2026-07-23"
+references:
+  - title: "Artificial Analysis — LLM Leaderboard"
+    url: "https://artificialanalysis.ai/leaderboards/models"
+    as_of: "2026-07-23"
