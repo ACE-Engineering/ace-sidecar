@@ -6,6 +6,8 @@ Local developer observability sidecar, transcript mining, and workflow skill min
 [![PyPI](https://img.shields.io/pypi/v/ace-sidecar.svg)](https://pypi.org/project/ace-sidecar/)
 [![License](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
 
+![ACE Sidecar Dashboard Preview](docs/assets/dashboard_preview.png)
+
 ---
 
 ## Quickstart
@@ -95,14 +97,20 @@ Sample `~/.ace/config.json`:
 git clone https://github.com/ACE-Engineering/ace-sidecar.git
 cd ace-sidecar
 
-# Install editable package with test dependencies
-pip install -e .[test]
+# Create local virtual environment and install editable package
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
 ```
 
 ### Running Tests
 
 ```bash
+# Run 33 unit tests
 pytest
+
+# Run E2E server route verification
+python scripts/e2e_test.py
 ```
 
 ---
