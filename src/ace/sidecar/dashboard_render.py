@@ -14,6 +14,7 @@ Every lever switch renders **disabled** — Phase 0 ships no levers.
 from __future__ import annotations
 
 import datetime
+import os
 from html import escape
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
@@ -1690,10 +1691,14 @@ def render(d: Dict[str, Any]) -> str:
     cap = d.get("capture") or {}
     b: List[str] = []
 
+    masked_transcripts = [
+        p.replace(os.path.expanduser("~"), "~") if isinstance(p, str) else str(p)
+        for p in d.get("sources", {}).get("transcripts", [])
+    ]
     b.append(
         "<div class='top'><span><span class='w'>ace</span> / "
         "<b>local</b> / "
-        f"{escape(d['range'])}</span><span class='p'>{escape(str(d['sources']['transcripts']))}"
+        f"{escape(d['range'])}</span><span class='p'>{escape(str(masked_transcripts))}"
         "&nbsp;&nbsp;<span class='live'><i></i>LOCAL ONLY</span></span></div>"
     )
     b.append("<div class='wrap'>")

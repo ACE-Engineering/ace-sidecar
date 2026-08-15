@@ -6,6 +6,24 @@ Local developer observability sidecar, transcript mining, and workflow skill min
 [![PyPI](https://img.shields.io/pypi/v/ace-sidecar.svg)](https://pypi.org/project/ace-sidecar/)
 [![License](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
 
+![ACE Sidecar Dashboard Preview](docs/assets/dashboard_preview.png)
+
+---
+
+## What is ACE Sidecar?
+
+**ACE Sidecar** is a local developer observability sidecar, transcript analytics engine, and workflow skill miner designed for heterogeneous AI coding agents (**Claude Code** and **Google Antigravity**).
+
+It runs 100% locally on your machine (`127.0.0.1:8787`) to provide **unified session observability**, **real-time model market pricing**, **prompt cache hit tracking**, and **automatic workflow skill extraction** — with zero cloud overhead and complete privacy.
+
+### Core Capabilities
+
+- **Heterogeneous Agent Observability**: Unified session analytics across Claude Code and Google Antigravity turns, tracking token spend, peak context sizes, wall-clock active/idle time, and list-price cost valuations.
+- **Local Loopback Relay**: Serves as a transparent local relay (`POST /v1/messages`) for your agent CLI tools, recording turn telemetry in a local SQLite database (`accountant.db`).
+- **Transcript Log Scanner**: Automatically scans local agent transcript logs (`~/.claude/projects`, `~/.gemini/antigravity/brain`) to extract historical turn metrics and compute efficiency headroom.
+- **Workflow Skill Miner**: Analyzes transcript patterns for repeated tool invocations and multi-step workflows, enabling 1-click installation of reusable skills into `.agents/skills/<skill_id>/SKILL.md`.
+- **Prometheus Metrics Exposition**: Exposes standard Prometheus text format metrics at `GET /metrics` for seamless integration with Grafana, OpenTelemetry Collector, or Datadog.
+
 ---
 
 ## Quickstart
