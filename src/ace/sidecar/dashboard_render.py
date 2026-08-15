@@ -271,12 +271,32 @@ box-shadow:0 12px 28px -6px rgba(0,230,153,0.15),0 4px 16px rgba(0,0,0,0.4)}
 text-transform:uppercase;margin-bottom:10px}
 .card h3{margin:4px 0 8px;font-size:14.5px;color:var(--ink);font-weight:600;letter-spacing:-.01em}
 .card p{margin:0 0 16px;color:var(--ink-3);font-size:13px;line-height:1.6;flex:1}
-.lk{align-self:flex-start;display:inline-flex;align-items:center;font-family:var(--mono);font-size:12px;
-color:var(--mint);background:rgba(0,230,153,0.06);border:1px solid rgba(0,230,153,0.25);
-border-radius:6px;padding:6px 14px;text-decoration:none;transition:all .2s ease;word-break:break-all}
+/* Spacing between glyph and label is `gap`, not a margin on the arrow: the arrow slides on
+   hover, and a transformed element with a margin drags the gap along with it. break-all is
+   deliberately not used — it would split "acefleet.dev" mid-word — but the mail buttons still
+   have to survive a long address in a 270px card, so wrapping is allowed anywhere only once a
+   word genuinely cannot fit. */
+.lk{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);
+font-size:12px;line-height:1.2;color:var(--mint);background:rgba(0,230,153,0.06);
+border:1px solid rgba(0,230,153,0.25);border-radius:7px;padding:9px 14px;text-decoration:none;
+overflow-wrap:anywhere;
+transition:background .2s ease,border-color .2s ease,color .2s ease,box-shadow .2s ease,transform .2s ease}
 .lk:hover{background:rgba(0,230,153,0.16);border-color:var(--mint);color:#ffffff;
 box-shadow:0 0 12px rgba(0,230,153,0.25);transform:translateY(-1px)}
-.site-lk{background:rgba(0,230,153,0.1);border-color:rgba(0,230,153,0.4);font-weight:600}
+.lk:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+.lk:active{transform:translateY(0)}
+.lk .arw{transition:transform .2s ease}
+.lk:hover .arw{transform:translateX(3px)}
+/* The one outbound link on the page, so it carries more weight than the mail buttons. */
+.site-lk{background:linear-gradient(135deg,rgba(0,230,153,0.22) 0%,rgba(0,230,153,0.08) 100%);
+border-color:rgba(0,230,153,0.55);color:#EAFFF6;font-weight:600;font-size:12.5px;padding:11px 18px;
+box-shadow:0 2px 10px -2px rgba(0,230,153,0.22)}
+.site-lk:hover{background:linear-gradient(135deg,rgba(0,230,153,0.34) 0%,rgba(0,230,153,0.16) 100%);
+box-shadow:0 6px 18px -4px rgba(0,230,153,0.35)}
+@media (prefers-reduced-motion:reduce){
+.lk,.lk .arw{transition:none}
+.lk:hover{transform:none}
+.lk:hover .arw{transform:none}}
 .foot{color:var(--ink-4);font-size:11.5px;margin-top:36px;padding-top:14px;
 border-top:1px solid var(--line);line-height:1.65}
 /* ---- modal drawer ---- */
@@ -1009,7 +1029,7 @@ def _qa_item(q: str, body: str, open_first: bool = False) -> str:
 
 
 def _qa(f: Optional[Dict[str, Any]], rc: Dict[str, Any]) -> str:
-    """§ 09 — the questions this dashboard reliably provokes, answered with the reader's own
+    """§ 13 — the questions this dashboard reliably provokes, answered with the reader's own
     numbers.
 
     Every figure is recomputed from the scope above rather than written into the prose. The
@@ -1017,7 +1037,7 @@ def _qa(f: Optional[Dict[str, Any]], rc: Dict[str, Any]) -> str:
     measure per-request latency.
     """
     head = _sec(
-        "10",
+        "13",
         "COMMON QUESTIONS",
         "Why the token counts look the way they do.",
         "Mechanism, priced against your scope.",
@@ -1367,12 +1387,17 @@ def _mailto(subject: str) -> str:
 
 
 def _about() -> str:
-    """§ 10 — what ACE is, and how to reach the people who build it.
+    """§ 14 — what ACE is, and how to reach the people who build it.
 
     Answers the two questions the measurements above cannot: what the measuring thing *is*,
     and who to contact about it. One address for questions, feature requests, collaborations,
     business and team rollout, with ``?subject=`` prefill as the routing — it degrades to a
     plain mailto if the client ignores it.
+
+    The banner names ACE Fleet because this page is the only thing most readers will ever see
+    of it: a reader who arrives through the open-source sidecar has no way to tell that it is
+    one vertical of a broader cost-control platform rather than the whole company, and that is
+    exactly the impression the section exists to correct.
     """
     cards = (
         (
@@ -1405,19 +1430,30 @@ def _about() -> str:
     body = "".join(
         f"<div class='card'><div class='k'><span class='pill on' style='font-weight:600;padding:2px 8px'>{escape(k)}</span></div>"
         f"<h3>{escape(h)}</h3>"
-        f"<p>{escape(p)}</p><a class='lk' href='{escape(href)}'><span>✉ {escape(label)}</span> <span style='margin-left:6px;'>→</span></a></div>"
+        f"<p>{escape(p)}</p><a class='lk' href='{escape(href)}'><span>✉ {escape(label)}</span><span class='arw'>→</span></a></div>"
         for k, h, p, href, label in cards
     )
     return (
-        _sec("12", "ACE SIDECAR", "Who makes this.", "And how to reach them.", "ABOUT")
+        _sec("14", "ACE SIDECAR", "Who makes this.", "And how to reach them.", "ABOUT")
         + "<div class='tag'>"
         "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;'>"
-        "<div class='t'>ACE Sidecar — local developer observability for AI coding agents.</div>"
-        "<div style='display:flex;gap:6px;'>"
-        "<span class='pill on' style='background:#0F231A;color:var(--mint);border-color:#1d3b2e;'>✓ LOCAL-FIRST</span>"
-        "<span class='pill on' style='background:#0d1c33;color:var(--blue);border-color:#1e355b;'>⚡ ZERO-CLOUD OVERHEAD</span>"
+        "<div class='t'>ACE Sidecar is built by ACE Fleet.</div>"
+        # The pills sit beside a headline about ACE Fleet, so they describe the proxy, not the
+        # page they are printed on: what it costs to adopt, and what it does to the bill.
+        # LOCAL-FIRST and ZERO-CLOUD OVERHEAD were true of the sidecar but read as claims
+        # about Fleet in this position, which inverts what it is.
+        "<div style='display:flex;gap:6px;flex-wrap:wrap;'>"
+        "<span class='pill on' style='background:#0F231A;color:var(--mint);border-color:#1d3b2e;'>⚡ DROP-IN PROXY</span>"
+        "<span class='pill on' style='background:#0d1c33;color:var(--blue);border-color:#1e355b;'>📉 CUT AI BILLS</span>"
         "</div></div>"
-        f"<div style='margin-top:16px;'><a class='lk site-lk' href='{SITE}'><span>🌐 Visit acefleet.dev</span> <span style='margin-left:6px;'>↗</span></a></div>"
+        "<p>ACE Fleet is a cost-saving proxy for companies scaling AI applications — it sits in "
+        "front of the model providers and cuts what an organisation spends on inference as that "
+        "spend grows, across every workload rather than any single one.</p>"
+        "<p>This sidecar is the coding-agent slice of that work, open-sourced on its own: the "
+        "same accounting turned on one developer's machine, where the spend is small enough to "
+        "check by hand and the levers are easy to see. It is a showcase of the approach — the "
+        "platform behind it is considerably wider in scope.</p>"
+        f"<div style='margin-top:16px;'><a class='lk site-lk' target='_blank' rel='noopener' href='{SITE}'><span>🌐 Visit acefleet.dev</span><span class='arw'>↗</span></a></div>"
         "</div>"
         f"<div class='cards'>{body}</div>"
     )
@@ -1425,9 +1461,9 @@ def _about() -> str:
 
 def _prometheus_section(d: Dict[str, Any]) -> str:
 
-    """§ 13 — Prometheus metrics exposition & offline telemetry ingestion guide."""
+    """§ 12 — Prometheus metrics exposition & offline telemetry ingestion guide."""
     head = _sec(
-        "13",
+        "12",
         "PROMETHEUS METRICS",
         "Machine-readable telemetry exporter.",
         "Prometheus, Grafana Alloy & OTel scraping.",
@@ -1475,7 +1511,7 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
         "<div style='display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap;'>"
         "<input type='text' readonly id='metricsUrlSection' value='http://127.0.0.1:8787/metrics' style='flex:1;min-width:250px;background:#0b0c0d;border:1px solid #282e30;color:var(--mint);padding:8px 12px;border-radius:6px;font-family:var(--mono);font-size:13px;' />"
         "<button class='lk' style='cursor:pointer;' onclick='copyMetricsSectionUrl(this)'><span>📋 Copy Endpoint URL</span></button>"
-        "<a class='lk site-lk' target='_blank' rel='noopener' href='/metrics'><span>🌐 Open Raw Stream</span> <span style='margin-left:4px;'>↗</span></a>"
+        "<a class='lk site-lk' target='_blank' rel='noopener' href='/metrics'><span>🌐 Open Raw Stream</span><span class='arw'>↗</span></a>"
         "</div>"
         "</div>"
         "<div class='pan' style='margin-bottom:16px;'>"
@@ -1512,10 +1548,15 @@ _NAV = (
     ("✓", "Installed Skills", "08"),
     ("◷", "Sessions", "09"),
     ("⧗", "Time", "10"),
-    ("📊", "Prometheus Metrics", "13"),
-    ("?", "Common questions", "11"),
-    ("◈", "About ACE", "12"),
+    ("📊", "Prometheus Metrics", "12"),
+    ("?", "Common questions", "13"),
+    ("◈", "About ACE", "14"),
 )
+# The numbers are the anchors — `#s<num>` — so they have to match the section each rail item
+# means, and each has to be unique across the page. Both failed here: Common questions pointed
+# at #s11 and landed on Live Stream, because the questions section was itself numbered 10 and
+# collided with Session Time, leaving two id='s10' on one document. Numbers now follow the
+# order the sections are emitted in; keep it that way when adding one.
 
 
 
@@ -1656,7 +1697,7 @@ def _rail(d: Dict[str, Any]) -> str:
   <p>Local developer observability sidecar for AI coding agents. Intercepts local Claude Code
   &amp; Antigravity traffic, mines session transcripts, proposes workflow skills, and exposes
   standard Prometheus metrics for time-series scraping.</p>
-  <a class='cta' href='#s12'>About &amp; contact</a>
+  <a class='cta' href='#s14'>About &amp; contact</a>
 </div>
 
 </div>"""
