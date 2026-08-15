@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("ace.sidecar.insights")
@@ -98,7 +99,14 @@ _IMAGE_TOKENS_PER_PIXEL = 1 / 750
 # "captured screenshot (1451x840, jpeg)" — which is the only place a transcript records them.
 _DIMS = re.compile(r"\((\d{2,5})x(\d{2,5}),\s*(?:jpeg|png|webp)\)")
 
-_cache: Dict[str, Any] = {"key": None, "sessions": None, "at": 0.0}
+_cache: Dict[str, Any] = {
+    "key": None,
+    "sessions": None,
+    "at": 0.0,
+    "roots": None,
+}
+# How long a transcript fingerprint is trusted without re-walking the tree. See sessions().
+_SESSIONS_TTL = 2.0
 
 
 def _rates(model: str):
@@ -570,7 +578,24 @@ def sessions(
     root: str = TRANSCRIPT_ROOT,
     antigravity_root: str = ANTIGRAVITY_ROOT,
 ) -> List[Dict[str, Any]]:
-    """Cached scan of Claude Code and Antigravity transcripts."""
+    """Cached scan of Claude Code and Antigravity transcripts.
+
+    The cache key is a fingerprint over every transcript file, so building it means a
+    recursive glob plus a stat per file — ~0.35s against a real transcript directory, paid
+    on cache *hits* as much as misses. Toggling an agent in the dashboard re-enters this
+    function several times, so a short freshness window lets a burst of requests reuse the
+    fingerprint instead of re-walking the tree for each one. Transcripts are appended by a
+    live agent, so the window has to stay well under the time it takes a user to notice a
+    turn is missing; a couple of seconds buys the whole toggle without being perceptible.
+    """
+    now = time.time()
+    if (
+        _cache["sessions"] is not None
+        and _cache["roots"] == (root, antigravity_root)
+        and now - _cache["at"] < _SESSIONS_TTL
+    ):
+        return _cache["sessions"]
+
     c_exists = os.path.isdir(root)
     a_exists = os.path.isdir(antigravity_root)
 
@@ -607,7 +632,12 @@ def sessions(
         )
         _cache["sessions"] = combined
         _cache["key"] = key
-        _cache["at"] = time.time()
+    # Refreshed whether or not the scan ran: reaching here means the fingerprint was just
+    # checked against the filesystem, so the cached sessions are known-current as of now and
+    # the freshness window restarts. Refreshing only on a miss would expire the window on
+    # every call once the data settled, putting the glob back in the toggle path for good.
+    _cache["at"] = time.time()
+    _cache["roots"] = (root, antigravity_root)
     return _cache["sessions"] or []
 
 
@@ -1751,18 +1781,31 @@ def span(
     return out
 
 
-def build(
-    store: Any = None,
-    capture: Optional[Dict[str, Any]] = None,
-    range_key: str = DEFAULT_RANGE,
-    agent: str = AGENT_ALL,
+_build_cache: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
+# One entry per (range, agent) pair the user can select, times a little slack for the
+# fingerprint turning over mid-session. Bounded because entries keyed on an old transcript
+# fingerprint are dead the moment a transcript is appended to, and an unbounded dict would
+# hold every one of them — each a full dashboard payload — for the life of the process.
+_BUILD_CACHE_MAX = 32
+
+
+def _build_payload(
+    all_sessions: List[Dict[str, Any]],
+    capture: Optional[Dict[str, Any]],
+    range_key: str,
+    agent: str,
+    store_path: Optional[str],
 ) -> Dict[str, Any]:
-    """Everything the dashboard needs, from local sources only."""
-    all_sessions = sessions()
+    """The part of the dashboard payload that is derived purely from transcripts on disk.
+
+    Split out of :func:`build` so it can be cached. Everything here is a pure function of
+    (transcripts, range, agent, capture) — no telemetry-store reads — which is what makes the
+    result safe to hand back to a later request. The live counters are deliberately *not*
+    computed here; see :func:`build`.
+    """
     window = RANGES.get(range_key, RANGES[DEFAULT_RANGE])
     scoped = filter_range(all_sessions, window, agent=agent)
     agg = totals(scoped)
-    live = store.summary() if store is not None else {"turns": 0}
     _fleet = fleet(scoped) if agg["available"] else None
     ab = agent_breakdown(scoped)
     return {
@@ -1780,8 +1823,6 @@ def build(
         "scorecards": (
             scorecards(scoped, agg.get("cost_usd") or 0.0) if agg["available"] else None
         ),
-        "live": live,
-        "recent": store.recent(30) if store is not None else [],
         "files": session_files(agent=agent),
         "capture": capture or {},
         "recommendations": recommendations(agg, capture, sess=scoped),
@@ -1799,10 +1840,68 @@ def build(
         ),
         "sources": {
             "transcripts": [TRANSCRIPT_ROOT, ANTIGRAVITY_ROOT],
-            "telemetry_db": getattr(store, "path", None),
+            "telemetry_db": store_path,
             "external": None,
         },
     }
+
+
+def build(
+    store: Any = None,
+    capture: Optional[Dict[str, Any]] = None,
+    range_key: str = DEFAULT_RANGE,
+    agent: str = AGENT_ALL,
+) -> Dict[str, Any]:
+    """Everything the dashboard needs, from local sources only.
+
+    Switching the agent tab re-runs this for the same transcripts, and the derived half is
+    expensive — mining skill proposals and building the fleet table dominate a ~3-4s rebuild
+    — so it is memoised on a key that includes the transcript fingerprint from
+    :func:`sessions`. Appending a turn changes that fingerprint and retires every entry
+    derived from the old one, so a stale payload cannot outlive the data it came from.
+
+    The live telemetry counters are re-read on every call instead of being cached with the
+    rest: they change on each proxied turn rather than when a transcript is written, so
+    caching them would freeze the one number on the page that is meant to move.
+    """
+    all_sessions = sessions()
+    store_path = getattr(store, "path", None)
+    cache_key = (
+        range_key,
+        agent,
+        _cache.get("key"),
+        store_path,
+        _capture_fingerprint(capture),
+    )
+    payload = _build_cache.get(cache_key)
+    if payload is None:
+        payload = _build_payload(all_sessions, capture, range_key, agent, store_path)
+        _build_cache[cache_key] = payload
+        while len(_build_cache) > _BUILD_CACHE_MAX:
+            _build_cache.popitem(last=False)
+
+    # Shallow copy: the caller (render, /api/stats) treats the payload as read-only, but the
+    # live keys below are per-request and must not be written into the shared cached dict.
+    out = dict(payload)
+    out["live"] = store.summary() if store is not None else {"turns": 0}
+    out["recent"] = store.recent(30) if store is not None else []
+    return out
+
+
+def _capture_fingerprint(capture: Optional[Dict[str, Any]]) -> str:
+    """A stable digest of the capture summary, for use in the build cache key.
+
+    The summary feeds ``recommendations`` and is echoed into the payload, so two requests
+    with different capture state must not share an entry. It is a small JSON-shaped dict;
+    hashing its canonical form keeps the key hashable and bounded regardless of its depth.
+    """
+    if not capture:
+        return ""
+    try:
+        blob = json.dumps(capture, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(sorted(capture))
+    return hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()
 
 
 def format_prometheus_metrics(d: Dict[str, Any]) -> str:
