@@ -9,6 +9,8 @@ Local developer observability for AI coding agents — see what your Claude Code
 
 ![ACE Sidecar dashboard](docs/assets/dashboard_preview.jpg)
 
+**[What it does](#what-it-does)** · **[Requirements](#requirements)** · **[Install](#install)** · **[Quickstart](#quickstart)** · **[Features](#features)** · **[Configuration](#configuration)** · **[Endpoints](#endpoints)** · **[Development](#development)** · **[License](#license)**
+
 ---
 
 ## What it does
