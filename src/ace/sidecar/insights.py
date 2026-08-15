@@ -1659,14 +1659,15 @@ def session_files(
     root: str = TRANSCRIPT_ROOT,
     antigravity_root: str = ANTIGRAVITY_ROOT,
     limit: int = 14,
+    agent: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """The session files on disk, newest first, with a short content snapshot."""
     out: List[Dict[str, Any]] = []
     paths: List[tuple] = []
-    if os.path.isdir(root):
+    if (not agent or agent in (AGENT_ALL, AGENT_CLAUDE)) and os.path.isdir(root):
         for p in glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True):
             paths.append((p, AGENT_CLAUDE))
-    if os.path.isdir(antigravity_root):
+    if (not agent or agent in (AGENT_ALL, AGENT_ANTIGRAVITY)) and os.path.isdir(antigravity_root):
         for dirpath, _, filenames in os.walk(antigravity_root):
             for fn in filenames:
                 if fn in ("transcript.jsonl", "transcript_full.jsonl"):
@@ -1781,7 +1782,7 @@ def build(
         ),
         "live": live,
         "recent": store.recent(30) if store is not None else [],
-        "files": session_files(),
+        "files": session_files(agent=agent),
         "capture": capture or {},
         "recommendations": recommendations(agg, capture, sess=scoped),
         "local_skill_proposals": (

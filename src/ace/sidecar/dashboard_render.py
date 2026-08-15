@@ -1734,6 +1734,8 @@ def render(d: Dict[str, Any]) -> str:
     ab = d.get("agent_breakdown") or {}
     ab_cards = []
     for ak, av in ab.items():
+        if cur_agent not in ("all", None) and ak != cur_agent:
+            continue
         sess_c = av.get("sessions", 0)
         turns_c = av.get("turns", 0)
         cost_v = av.get("cost_usd", 0.0)
