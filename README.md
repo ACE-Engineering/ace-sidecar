@@ -27,7 +27,7 @@ Built by [ACE Fleet](https://acefleet.dev) — see [Who builds this](#who-builds
 
 - **Python 3.12+** — the one hard requirement. Check with `python3 --version`.
 - macOS, Linux, or Windows. No admin rights needed.
-- A Claude subscription or an Anthropic API key.
+- **A coding agent you already use.** Claude Code and Google Antigravity are supported today. However you pay for it — subscription or API key — is how it stays paid; the sidecar adds no account of its own.
 
 Need a newer Python? `brew install python@3.12` (macOS), `sudo apt install python3.12` (Debian/Ubuntu), `sudo dnf install python3.12` (Fedora), [python.org](https://www.python.org/downloads/) (Windows), or `uv python install 3.12` (anywhere).
 
@@ -68,6 +68,8 @@ open http://127.0.0.1:8787/dashboard
 Use your coding agent as normal — turns appear live, with your transcript history already loaded.
 
 On a Claude subscription, start with `ace up --no-key` (Claude Code sends its own credential and the sidecar relays it), or put `{"no_key": true}` in `~/.ace/config.json`. `ace up --help` lists every flag.
+
+Antigravity needs no setup and no base URL: it is read from its transcripts on disk, so its sessions appear in the dashboard whether or not the sidecar was running at the time. Only Claude Code routes through the proxy.
 
 ---
 
