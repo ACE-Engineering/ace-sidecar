@@ -1383,13 +1383,31 @@ def _epoch(ts: Optional[str]) -> Optional[float]:
 
 
 def _latest_session(sess: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """The single session with the most recent turn — "what I am working on now"."""
-    best, best_ts = None, -1.0
+    """The active ongoing sessions (turns within last 2h) or the most recent session per agent type."""
+    if not sess:
+        return []
+    now = time.time()
+    active_cutoff = now - 7200.0  # 2 hours
+    active_sessions = []
     for s in sess:
-        last = max((_epoch(t.get("ts")) or 0.0) for t in s["turns"])
-        if last > best_ts:
-            best, best_ts = s, last
-    return [best] if best else []
+        turns = s.get("turns") or []
+        last_ts = max((_epoch(t.get("ts")) or 0.0) for t in turns) if turns else 0.0
+        if last_ts >= active_cutoff:
+            active_sessions.append(s)
+
+    if active_sessions:
+        return active_sessions
+
+    # Return the most recent session for each agent type
+    by_agent: Dict[str, tuple] = {}
+    for s in sess:
+        atype = s.get("agent_type", AGENT_CLAUDE)
+        turns = s.get("turns") or []
+        last_ts = max((_epoch(t.get("ts")) or 0.0) for t in turns) if turns else 0.0
+        if atype not in by_agent or last_ts > by_agent[atype][1]:
+            by_agent[atype] = (s, last_ts)
+
+    return [s for s, _ in by_agent.values()]
 
 
 def filter_range(
