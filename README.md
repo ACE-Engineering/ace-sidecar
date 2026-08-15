@@ -1,77 +1,198 @@
 # ACE Sidecar
 
-Local developer observability sidecar, transcript mining, and workflow skill miner for Claude Code & Antigravity.
+Local developer observability for AI coding agents — see what your Claude Code and Antigravity sessions actually cost, on your own machine.
 
 [![CI](https://github.com/ACE-Engineering/ace-sidecar/actions/workflows/ci.yml/badge.svg)](https://github.com/ACE-Engineering/ace-sidecar/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/ace-sidecar.svg)](https://pypi.org/project/ace-sidecar/)
+[![Python](https://img.shields.io/pypi/pyversions/ace-sidecar.svg)](https://pypi.org/project/ace-sidecar/)
 [![License](https://img.shields.io/badge/License-AGPL_3.0-blue.svg)](LICENSE)
 
-![ACE Sidecar Dashboard Preview](docs/assets/dashboard_preview.png)
+![ACE Sidecar dashboard](docs/assets/dashboard_preview.jpg)
 
 ---
 
 ## What is ACE Sidecar?
 
-**ACE Sidecar** is a local developer observability sidecar, transcript analytics engine, and workflow skill miner designed for heterogeneous AI coding agents (**Claude Code** and **Google Antigravity**).
+**ACE Sidecar** runs a small proxy on your own machine, in front of the model provider. Every turn your coding agent makes passes through it, and it records what that turn cost — tokens in and out, how much came from cache, how long you waited.
 
-It runs 100% locally on your machine (`127.0.0.1:8787`) to provide **unified session observability**, **real-time model market pricing**, **prompt cache hit tracking**, and **automatic workflow skill extraction** — with zero cloud overhead and complete privacy.
+It reads your existing agent transcripts too (`~/.claude/projects`, `~/.gemini/antigravity/brain`), so it has history to show the moment you start it, not after a week of collecting.
 
-### Core Capabilities
+**Nothing leaves your machine.** No account, no telemetry upload, no cloud dependency. Metrics live in a local SQLite file you can delete at any time.
 
-- **Heterogeneous Agent Observability**: Unified session analytics across Claude Code and Google Antigravity turns, tracking token spend, peak context sizes, wall-clock active/idle time, and list-price cost valuations.
-- **Local Loopback Relay**: Serves as a transparent local relay (`POST /v1/messages`) for your agent CLI tools, recording turn telemetry in a local SQLite database (`accountant.db`).
-- **Transcript Log Scanner**: Automatically scans local agent transcript logs (`~/.claude/projects`, `~/.gemini/antigravity/brain`) to extract historical turn metrics and compute efficiency headroom.
-- **Workflow Skill Miner**: Analyzes transcript patterns for repeated tool invocations and multi-step workflows, enabling 1-click installation of reusable skills into `.agents/skills/<skill_id>/SKILL.md`.
-- **Prometheus Metrics Exposition**: Exposes standard Prometheus text format metrics at `GET /metrics` for seamless integration with Grafana, OpenTelemetry Collector, or Datadog.
+ACE Sidecar is built by [ACE Fleet](https://acefleet.dev), a cost-saving proxy for companies scaling AI applications. The sidecar is the coding-agent slice of that work, open-sourced on its own.
+
+---
+
+## Requirements
+
+| | |
+|---|---|
+| **Python** | **3.12 or newer** — this is the one hard requirement |
+| **Operating system** | macOS, Linux, or Windows |
+| **Anthropic account** | A Claude subscription *or* an API key — either works |
+| **Network** | Only to reach the model provider; the sidecar itself never phones home |
+| **Admin rights** | Not needed — everything installs into your user directory |
+
+### Check your Python version first
+
+```bash
+python3 --version
+```
+
+If that prints **3.12.0 or higher**, you are ready. If it prints 3.9, 3.10, or 3.11 — or "command not found" — install a newer Python:
+
+- **macOS** — `brew install python@3.12`, or download from [python.org](https://www.python.org/downloads/)
+- **Ubuntu / Debian** — `sudo apt install python3.12`
+- **Fedora / RHEL** — `sudo dnf install python3.12`
+- **Windows** — download from [python.org](https://www.python.org/downloads/) and tick *"Add Python to PATH"*
+- **Any system** — [`uv`](https://docs.astral.sh/uv/) can fetch a Python for you: `uv python install 3.12`
+
+> **The one error people hit.** If `pip install ace-sidecar` says
+> `Could not find a version that satisfies the requirement ace-sidecar (from versions: none)`,
+> your Python is older than 3.12. The message is misleading — the package exists; your interpreter is just too old. Older versions of pip report it this way instead of naming the real problem. See [Install troubleshooting](#install-troubleshooting).
+
+---
+
+## Install
+
+ACE Sidecar is a command-line tool, so the cleanest installs give it its own isolated environment. Pick whichever line matches what you already have.
+
+### Recommended — `uv` or `pipx`
+
+```bash
+uv tool install ace-sidecar      # https://docs.astral.sh/uv/
+```
+
+```bash
+pipx install ace-sidecar         # https://pipx.pypa.io/
+```
+
+Either one puts an `ace` command on your PATH, keeps its dependencies away from your other projects, and works without admin rights.
+
+### With plain `pip`
+
+Use a virtual environment so the install cannot collide with anything else on your system:
+
+```bash
+python3.12 -m venv ~/.venvs/ace
+source ~/.venvs/ace/bin/activate        # Windows: ~\.venvs\ace\Scripts\activate
+pip install ace-sidecar
+```
+
+Installing into your *system* Python with `pip install --user ace-sidecar` also works, provided that Python is 3.12+.
+
+### Verify it worked
+
+```bash
+ace --help
+```
+
+### Install troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Could not find a version that satisfies the requirement ace-sidecar` | Your Python is older than 3.12 | Install Python 3.12+, then reinstall |
+| `ace: command not found` after installing | The install directory is not on your PATH | `uv tool update-shell`, or `pipx ensurepath`, then open a new terminal |
+| `ace` runs an old version after upgrading | An earlier copy is shadowing it on PATH | `which -a ace` shows every copy; remove the ones you do not want |
+| Permission errors during install | Installing into a system directory | Use `uv`, `pipx`, or a virtual environment instead of `sudo` |
 
 ---
 
 ## Quickstart
 
+**1. Start the sidecar.**
+
 ```bash
-pip install ace-sidecar
-ace up
+ace up --no-key
 ```
 
-Once running, point your developer tools to the local ACE sidecar:
+`--no-key` is the right flag for **Claude subscription users** — Claude Code sends its own credential and the sidecar simply relays it. If you pay by API key instead, use `ace up --key sk-ant-...` or set `ANTHROPIC_API_KEY` in your environment.
+
+> Running bare `ace up` with no key configured will stop and explain your options rather than starting.
+
+**2. Point your agent at it**, in the same terminal you will run your agent from:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+eval "$(ace env)"      # exports ANTHROPIC_BASE_URL for the port you are running (default 8787)
+```
+
+**3. Open the dashboard.**
+
+```
+http://127.0.0.1:8787/dashboard
+```
+
+Now use your coding agent as normal. Turns show up live, and your existing transcript history is already there.
+
+To make `--no-key` permanent, put it in `~/.ace/config.json`:
+
+```json
+{ "no_key": true }
 ```
 
 ---
 
 ## Features
 
-- **Local Proxy & Observability**: Intercepts local Claude Code and agent requests on loopback (`127.0.0.1:8787`) with zero cloud overhead.
-- **Privacy-First Zero-Trust Architecture**: Your API keys and full request bodies remain on your machine by default.
-- **Transcript Mining**: Analyzes Antigravity and Claude Code transcript logs to calculate real-world context utilization, cache savings, and token efficiency.
-- **Workflow Skill Miner**: Automatically detects repetitive multi-turn command patterns and proposes reusable agent skills.
-- **Interactive Developer Dashboard**: Access local metrics and reports directly at `http://127.0.0.1:8787/dashboard`.
-- **Prometheus Metrics Exporter**: Native `/metrics` endpoint serving standard Prometheus text exposition format for scraping into Prometheus, Grafana, OTel, and Datadog (see [docs/PROMETHEUS_METRICS.md](docs/PROMETHEUS_METRICS.md)).
+### Unified view across agents
 
+Claude Code and Antigravity land in one place, with per-agent cost, sessions, turns and models. Select a single agent and the whole page scopes to it.
+
+![Agent breakdown and fleet metrics](docs/assets/dashboard_preview.jpg)
+
+### Real spend, against real published prices
+
+Cost is computed per turn from a versioned rate catalog — input, output, cache-read, and the derived cache-write rates — with the source and date it was checked. Cache savings are shown as a counterfactual, so you can see what caching is already earning you.
+
+![Spend and the rate card](docs/assets/spend_and_rate_card.jpg)
+
+### Recommendations tied to a measured threshold
+
+Each recommendation fires off a number from your own transcripts, and carries what it would save, what it would cost, and the risk of doing it.
+
+![Recommendations](docs/assets/recommendations.jpg)
+
+### Workflow skill miner
+
+Repeated command sequences in your transcripts are detected and turned into reusable `SKILL.md` rules, installable into `.agents/skills/<id>/` with one click.
+
+![Workflow skill miner](docs/assets/workflow_skills.jpg)
+
+### Where the time actually goes
+
+Wall clock split into model generating, tool execution, human composing, and idle — including how long you spent parked on approval prompts.
+
+![Session time breakdown](docs/assets/session_time.jpg)
+
+### Prometheus exporter
+
+15 metrics in standard Prometheus text exposition format at `GET /metrics`, ready to scrape into Prometheus, Grafana Alloy, OpenTelemetry Collector, VictoriaMetrics, or Datadog. See [docs/PROMETHEUS_METRICS.md](docs/PROMETHEUS_METRICS.md).
+
+![Prometheus exporter](docs/assets/prometheus_exporter.jpg)
 
 ---
 
-## Usage & CLI Reference
+## CLI reference
 
 ### `ace up`
-Launches the local sidecar service with default settings (`127.0.0.1:8787`):
 
-```bash
-ace up
-```
+Runs the sidecar. Defaults to `127.0.0.1:8787`.
 
-#### Optional Customization Flags
-
-- **`ace up --key sk-ant-...`**: Specify Anthropic API key explicitly.
-- **`ace up --no-key`**: Run without a stored key (relaying caller's credentials).
-- **`ace up --port 8788 --host 127.0.0.1`**: Specify custom port or bind address.
-- **`ace up --capture`**: Enable local request body capture for offline analysis.
-- **`ace up --help`**: Display all available configuration options.
+| Flag | What it does |
+|---|---|
+| `--no-key` | Relay whatever credential the caller sends — the normal case for subscription Claude Code |
+| `--key sk-ant-...` | Pay with this Anthropic API key |
+| `--port 8788` | Bind a different port |
+| `--host 127.0.0.1` | Bind a different address (loopback only unless `--allow-remote`) |
+| `--capture [DIR]` | Record request bodies locally for offline analysis |
+| `--telemetry-db PATH` | Use a different SQLite file |
+| `--no-telemetry` | Do not record anything |
+| `--log-level LEVEL` | `critical` … `trace` |
+| `--help` | Every option, with its config key and environment variable |
 
 ### `ace env`
-Prints shell export configuration for easy terminal setup:
+
+Prints the export line for your current configuration, so the port always matches what you are actually running:
 
 ```bash
 eval "$(ace env)"
@@ -81,51 +202,68 @@ eval "$(ace env)"
 
 ## Configuration
 
-Configuration values are resolved in the following precedence order:
-1. **CLI Flags** (e.g. `--port`, `--no-key`)
-2. **Configuration File** (`~/.ace/config.json`)
-3. **Environment Variables** (`ANTHROPIC_API_KEY`, `ACE_SIDECAR_PORT`, etc.)
-4. **Built-in Defaults**
+Settings resolve in this order — the first one that specifies a value wins:
 
-Sample `~/.ace/config.json`:
+1. **CLI flags** — `--port`, `--no-key`, …
+2. **Config file** — `~/.ace/config.json`
+3. **Environment variables** — `ANTHROPIC_API_KEY`, `ACE_SIDECAR_PORT`, …
+4. **Built-in defaults**
+
 ```json
 {
-  "port": 8787,
   "no_key": true,
-  "log_level": "info",
-  "antigravity_dir": "~/.gemini/antigravity/brain"
+  "port": 8787,
+  "log_level": "warning"
 }
 ```
 
+### Where your data lives
+
+| Path | What it holds |
+|---|---|
+| `~/.ace/telemetry.db` | Turn telemetry, local SQLite, never uploaded |
+| `~/.ace/config.json` | Your settings |
+| `~/.claude/projects` | Claude Code transcripts — **read only** |
+| `~/.gemini/antigravity/brain` | Antigravity transcripts — **read only** |
+
+Delete `~/.ace/` to remove everything the sidecar has recorded.
+
 ---
 
-## Development & Testing
+## Endpoints
 
-### Installation from Source
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/messages` | The relay your agent talks to |
+| `GET /dashboard` | The dashboard shown above |
+| `GET /healthz` | Liveness and configuration state, without leaking your key |
+| `GET /api/stats` | The dashboard's numbers as JSON |
+| `GET /metrics` | Prometheus text exposition |
+
+The sidecar binds loopback and refuses non-local callers. Binding a public address requires `--allow-remote`, and even then unproxied-local-caller checks still apply.
+
+---
+
+## Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/ACE-Engineering/ace-sidecar.git
 cd ace-sidecar
 
-# Create local virtual environment and install editable package
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[test]"
 ```
 
-### Running Tests
-
 ```bash
-# Run 33 unit tests
-pytest
-
-# Run E2E server route verification
-python scripts/e2e_test.py
+pytest                        # 40 unit tests
+python scripts/e2e_test.py    # live server route verification
 ```
+
+Running from a checkout picks up `data/model_market/` in the working tree, so catalog edits take effect without reinstalling.
 
 ---
 
 ## License
 
-Distributed under the terms of the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+Distributed under the [GNU Affero General Public License v3.0](LICENSE).
