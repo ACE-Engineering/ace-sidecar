@@ -9,7 +9,7 @@ Local developer observability for AI coding agents — see what your Claude Code
 
 ![ACE Sidecar dashboard](docs/assets/dashboard_preview.jpg)
 
-**[What it does](#what-it-does)** · **[Requirements](#requirements)** · **[Install](#install)** · **[Quickstart](#quickstart)** · **[Features](#features)** · **[Configuration](#configuration)** · **[Endpoints](#endpoints)** · **[Development](#development)** · **[License](#license)**
+**[What it does](#what-it-does)** · **[Requirements](#requirements)** · **[Install](#install)** · **[Quickstart](#quickstart)** · **[Features](#features)** · **[Who builds this](#who-builds-this)** · **[Configuration](#configuration)** · **[Endpoints](#endpoints)** · **[Development](#development)** · **[License](#license)**
 
 ---
 
@@ -19,7 +19,7 @@ ACE Sidecar runs a proxy on your machine in front of the model provider, recordi
 
 Nothing leaves your machine: no account, no upload. Metrics live in a local SQLite file you can delete.
 
-Built by [ACE Fleet](https://acefleet.dev), a cost-saving proxy for companies scaling AI applications. This sidecar is the coding-agent slice of that work, open-sourced on its own.
+Built by [ACE Fleet](https://acefleet.dev) — see [Who builds this](#who-builds-this).
 
 ---
 
@@ -94,6 +94,28 @@ On a Claude subscription, start with `ace up --no-key` (Claude Code sends its ow
 **Prometheus exporter.** 15 metrics in standard text exposition format at `GET /metrics`, for Prometheus, Grafana Alloy, OpenTelemetry Collector, VictoriaMetrics, or Datadog. See [docs/PROMETHEUS_METRICS.md](docs/PROMETHEUS_METRICS.md).
 
 ![Prometheus exporter](docs/assets/prometheus_exporter.jpg)
+
+---
+
+## Who builds this
+
+ACE Sidecar is built by **[ACE Fleet](https://acefleet.dev)**.
+
+ACE Fleet is a middleware proxy for companies scaling AI applications. It sits between their services and the model providers and reduces what they spend on inference as that usage grows — across every workload in the business, not one team's tooling. That is the product.
+
+This sidecar is one vertical of it, open-sourced on its own: the same accounting, pointed at a single developer's coding agents.
+
+| | **ACE Sidecar** (this repo) | **ACE Fleet** |
+|---|---|---|
+| **Scope** | One developer's machine | An organisation's whole inference bill |
+| **Workload** | Coding agents — Claude Code, Antigravity | Any AI application in production |
+| **What it does** | **Measures.** Records and explains the spend | **Acts.** Reduces the spend in the request path |
+| **Where it runs** | Loopback on your machine; nothing leaves it | Managed middleware between your services and the providers |
+| **License** | Open source, AGPL-3.0 | Commercial |
+
+The two answer different questions. The sidecar answers *where is my money going* on the machine in front of you, at a scale small enough to check by hand. Fleet answers *what do we do about it* once that question is being asked of an entire company's traffic.
+
+Open-sourcing the coding-agent slice is deliberate: it is the part a developer can run in one command, on their own data, without talking to anyone — and the clearest way to show how the larger system reasons about cost. If it is useful at your desk, [we would like to hear about it](mailto:contact@acefleet.dev).
 
 ---
 
