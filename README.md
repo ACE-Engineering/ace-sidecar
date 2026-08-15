@@ -56,24 +56,19 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
 ## Usage & CLI Reference
 
 ### `ace up`
-Launches the local proxy sidecar service.
+Launches the local sidecar service with default settings (`127.0.0.1:8787`):
 
 ```bash
-# Start proxy with default settings (port 8787, 127.0.0.1)
 ace up
-
-# Specify Anthropic API key explicitly
-ace up --key sk-ant-...
-
-# Run without a stored key (relaying caller's credentials)
-ace up --no-key
-
-# Specify custom port or bind address
-ace up --port 8788 --host 127.0.0.1
-
-# Enable local request capture for offline inspection
-ace up --capture
 ```
+
+#### Optional Customization Flags
+
+- **`ace up --key sk-ant-...`**: Specify Anthropic API key explicitly.
+- **`ace up --no-key`**: Run without a stored key (relaying caller's credentials).
+- **`ace up --port 8788 --host 127.0.0.1`**: Specify custom port or bind address.
+- **`ace up --capture`**: Enable local request body capture for offline analysis.
+- **`ace up --help`**: Display all available configuration options.
 
 ### `ace env`
 Prints shell export configuration for easy terminal setup:
