@@ -87,15 +87,39 @@ def get_installed_skills(workspace_dir: str = None) -> List[Dict[str, Any]]:
     return installed
 
 
+_CLAUDE_GLOB = "~/.claude/projects/**/*.jsonl"
+_ANTIGRAVITY_GLOB = "~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl"
+
+_scan_cache: Dict[str, Any] = {"key": None, "result": None}
+
+
 def _scan_transcript_logs() -> Tuple[List[List[Tuple[str, str]]], Counter]:
-    """Scan local Claude Code and Antigravity transcript files directly from disk."""
+    """Scan local Claude Code and Antigravity transcript files directly from disk.
+
+    This parses every line of every transcript — six figures of ``json.loads`` on a
+    well-used machine, comfortably over a second — and what it returns depends only on the
+    files on disk. It ignores the ``sessions`` its caller filtered, so the answer is the
+    same whichever agent tab or time range the dashboard is rendering, and rebuilding the
+    page per tab used to redo the identical scan each time.
+
+    Memoised on a count-and-newest-mtime fingerprint, the same cheap identity the session
+    scanner uses: appending a turn moves it and forces a rescan, so the mined proposals
+    cannot lag the transcripts they come from.
+    """
+    # 1. Claude Transcripts (~/.claude/projects/**/*.jsonl)
+    claude_paths = glob.glob(os.path.expanduser(_CLAUDE_GLOB), recursive=True)
+    agy_paths = glob.glob(os.path.expanduser(_ANTIGRAVITY_GLOB))
+
+    key = (
+        f"{len(claude_paths) + len(agy_paths)}:"
+        f"{max((os.path.getmtime(p) for p in claude_paths + agy_paths), default=0):.0f}"
+    )
+    if _scan_cache["key"] == key and _scan_cache["result"] is not None:
+        return _scan_cache["result"]
+
     sequences: List[List[Tuple[str, str]]] = []
     prompts: Counter = Counter()
 
-    # 1. Claude Transcripts (~/.claude/projects/**/*.jsonl)
-    claude_paths = glob.glob(
-        os.path.expanduser("~/.claude/projects/**/*.jsonl"), recursive=True
-    )
     for path in claude_paths:
         seq: List[Tuple[str, str]] = []
         try:
@@ -160,12 +184,8 @@ def _scan_transcript_logs() -> Tuple[List[List[Tuple[str, str]]], Counter]:
         if seq:
             sequences.append(seq)
 
-    # 2. Antigravity Transcripts (~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl)
-    agy_paths = glob.glob(
-        os.path.expanduser(
-            "~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl"
-        )
-    )
+    # 2. Antigravity Transcripts (globbed above, alongside the Claude ones, so that the
+    # cache fingerprint covers both sources before either is parsed).
     for path in agy_paths:
         seq = []
         try:
@@ -231,6 +251,8 @@ def _scan_transcript_logs() -> Tuple[List[List[Tuple[str, str]]], Counter]:
         if seq:
             sequences.append(seq)
 
+    _scan_cache["key"] = key
+    _scan_cache["result"] = (sequences, prompts)
     return sequences, prompts
 
 
