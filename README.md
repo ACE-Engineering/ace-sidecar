@@ -85,6 +85,10 @@ Antigravity needs no setup and no base URL: it is read from its transcripts on d
 
 ![Recommendations](docs/assets/recommendations.jpg)
 
+**Optimisation levers, ranked by what they are worth to you.** The rail orders every lever by the money it would recover on your transcripts, with the share of your bill and the risk beside it. Each is scored alone, so the figures overlap and do not sum — and none are wired yet: this release measures.
+
+![Levers ranked by headroom](docs/assets/lever_rail.jpg)
+
 **Workflow skill miner.** Repeated command sequences become reusable `SKILL.md` rules, installable into `.agents/skills/<id>/` in one click.
 
 ![Workflow skill miner](docs/assets/workflow_skills.jpg)
