@@ -41,6 +41,31 @@ ace = "ace.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ace"]
 
+# The rate catalog lives at <repo>/data/model_market, outside src/, so hatchling does not pick
+# it up as package data on its own. Without this the wheel shipped code only, and
+# ace.gateway.pricing._resolve_catalog_root fell through to its cwd-relative last resort: every
+# `ace up` launched from anywhere but the repo root found no rates and recorded each turn as
+# UNPRICED at $0.00. Map it to the in-wheel location that resolver already probes.
+#
+# feeds/ is deliberately excluded: it is 2.9M of the catalog's 3.1M (raw litellm / models.dev
+# dumps) and nothing in the shipped package reads it — its only consumer, the
+# ace.gateway.llm_router.feeds named in pricing.catalog_root's docstring, does not exist in this
+# tree. Add it back here if that module lands.
+[tool.hatch.build.targets.wheel.force-include]
+"data/model_market/models" = "ace/data/model_market/models"
+"data/model_market/providers" = "ace/data/model_market/providers"
+"data/model_market/schema" = "ace/data/model_market/schema"
+"data/model_market/benchmarks.yaml" = "ace/data/model_market/benchmarks.yaml"
+"data/model_market/priors.yaml" = "ace/data/model_market/priors.yaml"
+"data/model_market/segments.yaml" = "ace/data/model_market/segments.yaml"
+"data/model_market/VERSION" = "ace/data/model_market/VERSION"
+
+# The sdist keeps the checkout layout (data/ at the repo root), which is what the first branch
+# of _resolve_catalog_root expects when building or installing from source.
+[tool.hatch.build.targets.sdist]
+include = ["src/ace", "data/model_market", "tests", "README.md", "pyproject.toml"]
+exclude = ["data/model_market/feeds"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
