@@ -405,6 +405,27 @@ def _span_caption(d: Dict[str, Any]) -> str:
     return f"{a} → {z}{tail}"
 
 
+def _mask_home(p: Any) -> str:
+    """Render a filesystem path with the home directory collapsed to ``~``.
+
+    Every absolute path on this page starts inside the reader's home directory, so printing
+    it in full publishes their account name — and, in the session list, the names of private
+    repositories alongside it. This dashboard is the thing people screenshot when they want
+    to show what their agents cost, which makes an unmasked path a leak with a very short
+    path to a public timeline. Masking is applied at render time only; nothing downstream
+    reads these strings back as paths.
+    """
+    if not isinstance(p, str):
+        return str(p)
+    home = os.path.expanduser("~")
+    if not home or home == "/":
+        return p
+    # Claude Code encodes a project's path into its transcript filename by replacing every
+    # separator with a dash, so the home directory shows up there in a form the plain
+    # replace above cannot see: /Users/alex -> -Users-alex.
+    return p.replace(home, "~").replace(home.replace(os.sep, "-"), "~")
+
+
 def _sec(num: str, label: str, head: str, tail: str, badge: str = "LIVE") -> str:
     cls = "live" if badge == "LIVE" else "live calc"
     # The id is what the rail nav targets. Keyed off the section number so a section and its
@@ -554,8 +575,7 @@ def _time(tb: Dict[str, Any], pk: Dict[str, Any]) -> str:
             + top
             + ".<br>Measured baseline for comparison: "
             + f"{_pct(ref.get('share_of_idle') or 0)} of idle at "
-            + f"{_hours(ref.get('mean_s'))} per stretch "
-            + "(docs/analysis_docs/2026-07-29-sidecar-approval-and-checkpoint-analysis.md § 2). "
+            + f"{_hours(ref.get('mean_s'))} per stretch. "
             + "<b>This is a ceiling, not a saving</b> — the realised figure only exists "
             + "after something actually approves those calls, as a before/after on this "
             + "same number. Nothing in this release does."
@@ -692,7 +712,7 @@ def _fleet(f: Optional[Dict[str, Any]]) -> str:
         "01",
         "FLEET METRICS",
         "What the fleet did.",
-        "The eleven §0 metrics from docs/22, measured on your transcripts.",
+        "Eleven headline metrics, measured on your transcripts.",
         "LOCAL",
     )
     if not f:
@@ -1735,8 +1755,7 @@ def render(d: Dict[str, Any]) -> str:
     b: List[str] = []
 
     masked_transcripts = [
-        p.replace(os.path.expanduser("~"), "~") if isinstance(p, str) else str(p)
-        for p in d.get("sources", {}).get("transcripts", [])
+        _mask_home(p) for p in d.get("sources", {}).get("transcripts", [])
     ]
     b.append(
         "<div class='top'><span><span class='w'>ace</span> / "
@@ -2138,7 +2157,7 @@ def render(d: Dict[str, Any]) -> str:
             f"<tr><td class='m'><b style='color:var(--ink);'>{escape(s['name'])}</b></td>"
             f"<td class='m'><code style='color:var(--mint);'>{escape(s['trigger_command'])}</code></td>"
             f"<td><span class='pill on'>{escape(s['agent_type'].upper())}</span></td>"
-            f"<td class='m' style='color:var(--ink-3)'>{escape(s['installed_path'])}</td>"
+            f"<td class='m' style='color:var(--ink-3)'>{escape(_mask_home(s['installed_path']))}</td>"
             f"<td style='color:var(--ink-2);font-size:12.5px;'>{escape(s['description'])}</td></tr>"
             for s in installed_skills
         )
@@ -2162,12 +2181,14 @@ def render(d: Dict[str, Any]) -> str:
     )
     files = d.get("files") or []
     rows = "".join(
-        f"<tr><td class='m' style='color:var(--ink-3)'>{escape(fi['path'])}</td>"
+        f"<tr><td class='m' style='color:var(--ink-3)'>{escape(_mask_home(fi['path']))}</td>"
         f"<td><span class='pill' style='{('color:var(--mint);border-color:#1d3b2e;background:#0F231A' if fi.get('agent_type')=='antigravity' else 'color:var(--blue);border-color:#1e355b;background:#0d1c33')}'>{escape(fi.get('agent_type', 'claude'))}</span></td>"
-        f"<td class='m' style='color:var(--ink-4)'>{escape(fi['project'] or '—')}</td>"
+        f"<td class='m' style='color:var(--ink-4)'>{escape(_mask_home(fi['project'] or '—'))}</td>"
         f"<td>{escape(fi['kind'])}</td><td class='num'>{_f(fi['turns'])}</td>"
         f"<td class='num'>{_kb(fi['bytes'])}</td><td class='num'>{_ago(fi['mtime'])}</td>"
-        f"<td class='snip'>{escape(fi['snippet'] or '—')}</td></tr>"
+        # The snippet is the session's opening prompt verbatim, so it carries whatever paths
+        # the user happened to type or paste — Antigravity artifact URIs in particular.
+        f"<td class='snip'>{escape(_mask_home(fi['snippet'] or '—'))}</td></tr>"
         for fi in files
     )
     b.append(
@@ -2247,8 +2268,8 @@ def render(d: Dict[str, Any]) -> str:
 
     src = d["sources"]
     b.append(
-        f"<div class='foot'>transcripts <code>{escape(str(src['transcripts']))}</code> · "
-        f"telemetry <code>{escape(str(src['telemetry_db'] or 'not wired'))}</code> · "
+        f"<div class='foot'>transcripts <code>{escape(str([_mask_home(p) for p in src['transcripts']]))}</code> · "
+        f"telemetry <code>{escape(_mask_home(src['telemetry_db']) if src['telemetry_db'] else 'not wired')}</code> · "
         f"external <b>none</b><br>Costs are Anthropic list-price valuations — on a "
         f"subscription no dollars are actually billed. Strategy figures are simulations with "
         f"stated assumptions, not measurements. Refreshes every {REFRESH_SECONDS}s.</div>"
