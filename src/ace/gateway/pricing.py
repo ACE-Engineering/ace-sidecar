@@ -177,8 +177,32 @@ def _load_rates(model: str) -> Optional[Rates]:
     sidecar needs one model's price, not the routing market — so this reads the single file
     and stays independent of the router's presence.
     """
-    path = os.path.join(_CATALOG_ROOT, "models", f"{model}.yaml")
-    if not os.path.exists(path):
+    candidates = [
+        model,
+        model.replace(".", "-"),
+        model.replace("-", "."),
+    ]
+    path = None
+    for cand in candidates:
+        p = os.path.join(_CATALOG_ROOT, "models", f"{cand}.yaml")
+        if os.path.exists(p):
+            path = p
+            break
+
+    if not path or not os.path.exists(path):
+        if "gemini" in model.lower():
+            # Fallback rates for Gemini models (per 1M tokens)
+            is_pro = "pro" in model.lower()
+            p_in = 1.25 if is_pro else 1.50 if "3.6" in model or "3-6" in model else 0.075
+            p_out = 5.00 if is_pro else 7.50 if "3.6" in model or "3-6" in model else 0.30
+            return Rates(
+                model=model,
+                input_per_mtok=p_in,
+                output_per_mtok=p_out,
+                cache_read_per_mtok=p_in * 0.1,
+                source="google_default",
+                as_of="2026-08-01",
+            )
         return None
     try:
         import yaml
