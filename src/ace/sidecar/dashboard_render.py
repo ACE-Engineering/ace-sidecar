@@ -79,7 +79,9 @@ padding-bottom:18px;border-bottom:1px solid var(--line)}
 .scope .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;
 text-transform:uppercase;color:var(--ink-4);margin-right:4px}
 .scope a{font-family:var(--mono);border:1px solid var(--line-2);border-radius:4px;
-padding:5px 12px;font-size:11.5px;color:var(--ink-3);background:var(--surface-2)}
+padding:5px 12px;font-size:11.5px;color:var(--ink-3);background:var(--surface-2);
+text-decoration:none;cursor:pointer;display:inline-block;transition:all 0.15s ease}
+.scope a:hover{color:var(--ink);border-color:var(--ink-4);background:var(--surface)}
 .scope a.on{color:var(--mint);border-color:#1d3b2e;background:#0F231A}
 .scope .span{font-family:var(--mono);font-size:11px;color:var(--ink-4);margin-left:6px;
 font-variant-numeric:tabular-nums}
@@ -1708,11 +1710,11 @@ def render(d: Dict[str, Any]) -> str:
     )
     cur_agent = d.get("agent", "all")
     scope = "".join(
-        f"<a class=\"{'on' if k == d['range'] else ''}\" href='?range={k}&agent={cur_agent}'>{escape(lbl)}</a>"
+        f"<a class=\"{'on' if k == d['range'] else ''}\" href='/dashboard?range={k}&agent={cur_agent}'>{escape(lbl)}</a>"
         for k, lbl in d["ranges"]
     )
     agents_nav = "".join(
-        f"<a class=\"{'on' if k == cur_agent else ''}\" href='?range={d['range']}&agent={k}'>{escape(lbl)}</a>"
+        f"<a class=\"{'on' if k == cur_agent else ''}\" href='/dashboard?range={d['range']}&agent={k}'>{escape(lbl)}</a>"
         for k, lbl in d.get(
             "agents",
             [
