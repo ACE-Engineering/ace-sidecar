@@ -3,12 +3,10 @@ class AceSidecar < Formula
 
   desc "Local developer observability sidecar and skill miner for Claude Code & Antigravity"
   homepage "https://github.com/ACE-Engineering/ace-sidecar"
-  url "https://files.pythonhosted.org/packages/source/a/ace-sidecar/ace-sidecar-0.1.1.tar.gz"
-  # Fill in once the sdist is on PyPI — the digest cannot be known before then:
-  #   shasum -a 256 dist/ace_sidecar-0.1.1.tar.gz
-  # Left as a placeholder deliberately: it fails `brew install` on a checksum
-  # mismatch, which is the right outcome while the release is not yet published.
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  # The filename carries an underscore even though the project name is hyphenated:
+  # PEP 625 has build backends normalise it, so .../ace-sidecar-0.1.1.tar.gz is a 404.
+  url "https://files.pythonhosted.org/packages/source/a/ace-sidecar/ace_sidecar-0.1.1.tar.gz"
+  sha256 "88fc9edb468f697139fbf6cccbb7a90fec7a7b9c18634076821fdbc582aaf8fc"
   license "AGPL-3.0-or-later"
 
   depends_on "python@3.12"
