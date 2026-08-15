@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Ship `data/model_market` in the wheel as package data at `ace/data/model_market`. The catalog sits outside `src/`, so hatchling never picked it up and the published wheel contained code only; `_resolve_catalog_root` then fell through to its cwd-relative last resort, and an installed `ace up` launched from anywhere but the repo root found no rates and recorded every turn as UNPRICED at $0.00. `feeds/` stays out of the wheel — 2.9M of the 3.1M catalog, and nothing in the shipped package reads it.
+
+---
+
 ## [0.1.1] - 2026-08-11
 
 ### Added
