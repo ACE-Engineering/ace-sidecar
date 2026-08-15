@@ -187,3 +187,36 @@ def test_session_files_are_scoped_to_the_selected_agent(transcripts):
     assert (
         I.session_files(agent="antigravity") == []
     ), "a Claude transcript was listed under Antigravity"
+
+
+def test_home_directory_is_masked_everywhere_it_is_rendered(transcripts, monkeypatch):
+    """No absolute home path reaches the page.
+
+    The dashboard is what people screenshot to show what their agents cost, so an unmasked
+    path publishes their account name — and, in the session list, the names of the private
+    repositories they work in. Masking lives in one helper precisely so that a new call site
+    cannot quietly opt out of it; this test fails if one does.
+    """
+    from ace.sidecar import dashboard_render as R
+
+    home = os.path.expanduser("~")
+    assert home and home != "/", "no home directory to mask"
+
+    _transcript(transcripts, "s1", "claude-opus-5", "2026-08-15T10:00:00Z")
+    store = FakeStore()
+    html = R.render(I.build(store=store, range_key="all", agent="all"))
+
+    assert home not in html, "an absolute home path was rendered"
+    # Claude Code encodes a project path into the transcript filename with dashes, which is a
+    # second way the same directory can appear.
+    assert home.replace(os.sep, "-") not in html, "a dash-encoded home path was rendered"
+
+
+def test_mask_home_handles_both_encodings_and_non_strings():
+    from ace.sidecar.dashboard_render import _mask_home
+
+    home = os.path.expanduser("~")
+    assert _mask_home(f"{home}/.ace/telemetry.db") == "~/.ace/telemetry.db"
+    assert _mask_home(home.replace(os.sep, "-") + "-Documents") == "~-Documents"
+    assert _mask_home(None) == "None"
+    assert _mask_home("/etc/hosts") == "/etc/hosts"
