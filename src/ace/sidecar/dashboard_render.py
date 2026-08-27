@@ -1616,26 +1616,121 @@ _NAV = (
 
 
 def _nav_css() -> str:
-    """Move the rail highlight to whichever section the reader actually navigated to.
+    """No highlight rules: ``.rail .item.on`` in the main stylesheet is the whole marker now.
 
-    One-document page, so "switching view" is a fragment jump and ``:target`` already knows
-    the destination. ``:has()`` lets the rail — an earlier sibling of the section — react to
-    it without JavaScript.
+    This used to generate ``body:has(#sNN:target) .rail .item[href='#sNN']`` and move the
+    marker with no JavaScript at all. That was the nicer design and it worked until the
+    dashboard grew a scope switcher: swapping the agent filter replaces ``.main``'s innerHTML,
+    which destroys and rebuilds every ``.sec``, and Chrome does not re-evaluate a ``:has()``
+    against ``:target`` for a subtree rebuilt underneath it. The rail then stayed pinned to
+    the server-rendered Overview no matter where the reader navigated — the marker frozen
+    while the content moved, which reads as "the tabs stopped working".
 
-    Limits: it follows *clicks*, not scroll position, so scrolling by hand does not move the
-    marker; and a browser without ``:has()`` drops the rules whole and falls back to Overview
-    lit always.
+    The same swap also dropped the fragment from the URL, so a scope change silently reset
+    ``:target`` to nothing and re-lit Overview even when nothing had been clicked.
+
+    Both are DOM-lifecycle problems, so the marker now lives where the DOM lifecycle is
+    already handled: :func:`_nav_js` sets the class, and re-sets it after every swap.
     """
-    lit = ",".join(
-        f"body:has(#s{t}:target) .rail .item[href='#s{t}']" for _, _, t in _NAV
-    )
-    return (
-        # Once anything is targeted, the static default must yield -- otherwise Overview and
-        # the real destination are both lit.
-        "body:has(.sec:target) .rail .item.on{background:transparent;color:var(--ink-2);"
-        "box-shadow:none}"
-        f"{lit}{{background:#141718;color:var(--ink);box-shadow:inset 2px 0 0 var(--mint)}}"
-    )
+    return ""
+
+
+def _nav_js() -> str:
+    """Own both halves of a rail click: which section is shown, and which entry is marked.
+
+    Neither half survives the scope switcher on its own.
+
+    **The marker.** It used to be pure CSS — ``body:has(#sNN:target) .rail .item[href='#sNN']``
+    — which is a nicer design and worked until swapping the agent filter began replacing
+    ``.main``'s innerHTML. That rebuilds every ``.sec``, and Chrome does not re-evaluate a
+    ``:has()`` against ``:target`` for a subtree replaced underneath it, so the marker froze
+    on the server-rendered Overview while the content moved.
+
+    **The scroll.** After that same swap the browser stops scrolling on fragment change at
+    all: the hash updates, nothing moves. Measured on a rebuilt page, a click on a rail entry
+    left ``scrollY`` at 0 for 3.5s with ``scroll-behavior: auto`` and the target 7,094px down.
+    The document's fragment target does not survive having its element replaced, and a plain
+    ``<a href="#sNN">`` has nothing left to scroll to.
+
+    So the click is handled explicitly rather than delegated to the browser: set the hash,
+    scroll the section in ourselves, move the marker. All three are idempotent, which is what
+    lets :func:`initScopeNav`'s swap path re-run the binding without stacking handlers.
+    """
+    return """
+function syncRailMarker() {
+  const items = document.querySelectorAll('.rail .item');
+  if (!items.length) return;
+  const hash = window.location.hash;
+  let hit = null;
+  items.forEach(a => { if (a.getAttribute('href') === hash) hit = a; });
+  items.forEach(a => a.classList.remove('on'));
+  (hit || items[0]).classList.add('on');
+}
+
+function initRailNav() {
+  document.querySelectorAll('.rail .item').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (href.charAt(0) !== '#') return;
+    // Assigned, not addEventListener: re-running after a swap must replace the handler
+    // rather than add a second one that scrolls twice.
+    a.onclick = function(e) {
+      const el = document.getElementById(href.slice(1));
+      if (!el) return;                     // unknown anchor: let the browser try
+      e.preventDefault();
+      if (window.location.hash !== href) {
+        window.history.pushState({}, '', window.location.pathname + window.location.search + href);
+      }
+      el.scrollIntoView({ block: 'start' });
+      syncRailMarker();
+    };
+  });
+}
+
+// Follow the reader, not just their clicks. Without this the marker only ever moved on a
+// click, so a reload — which restores scroll position but carries no fragment — left the
+// rail lit on Overview while the reader was looking at section 12. Scrolling by hand had
+// the same effect.
+//
+// A scroll listener rather than an IntersectionObserver: these sections are thousands of
+// pixels tall, so scrolling through the middle of one crosses no threshold and an observer
+// stays silent for the entire section. Measured that way first — the marker never moved at
+// any scroll position. Reading positions on scroll always answers the question being asked,
+// "which section is at the top of the viewport".
+let railSpyTargets = [];
+let railSpyQueued = false;
+function railSpyUpdate() {
+  railSpyQueued = false;
+  if (!railSpyTargets.length) return;
+  let best = null, bestTop = -Infinity;
+  railSpyTargets.forEach(pair => {
+    const top = pair[0].getBoundingClientRect().top;
+    if (top <= 120 && top > bestTop) { bestTop = top; best = pair[1]; }
+  });
+  if (!best) best = railSpyTargets[0][1];
+  if (best.classList.contains('on')) return;   // no DOM writes on an unchanged marker
+  document.querySelectorAll('.rail .item').forEach(a => a.classList.remove('on'));
+  best.classList.add('on');
+}
+function initRailSpy() {
+  railSpyTargets = [];
+  document.querySelectorAll('.rail .item').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    if (href.charAt(0) !== '#') return;
+    const el = document.getElementById(href.slice(1));
+    if (el) railSpyTargets.push([el, a]);
+  });
+  railSpyUpdate();
+}
+// Bound once, not per init: re-running initRailSpy after a swap refreshes the targets, and
+// a second listener would only duplicate the same work.
+window.addEventListener('scroll', () => {
+  if (railSpyQueued) return;
+  railSpyQueued = true;
+  window.requestAnimationFrame(railSpyUpdate);
+}, { passive: true });
+
+window.addEventListener('hashchange', syncRailMarker);
+"""
 
 
 _LEVER_NAMES = ("age-out", "bash truncate", "supersede", "read de-dup")
@@ -2374,6 +2469,7 @@ def render(d: Dict[str, Any]) -> str:
         + "</div>"
         + metrics_modal
         + "<script>"
+        + _nav_js()
         + """
 let currentCollector = 'prometheus';
 
@@ -2566,8 +2662,14 @@ function initScopeNav() {
           if (newMain && mainEl) {
             mainEl.innerHTML = newMain.innerHTML;
             mainEl.style.opacity = '1';
-            window.history.pushState({}, '', href);
+            // Preserve the fragment: the scope switcher changes WHICH data is shown,
+            // never WHICH section the reader is in. Dropping it here scrolled them
+            // back to Overview on every agent change.
+            window.history.pushState({}, '', href + window.location.hash);
             initScopeNav();
+            initRailNav();
+            syncRailMarker();
+            initRailSpy();
             initMetricsUI();
             return;
           }
@@ -2592,6 +2694,9 @@ window.addEventListener('popstate', async () => {
         mainEl.innerHTML = newMain.innerHTML;
         initScopeNav();
         initMetricsUI();
+        initRailNav();
+        syncRailMarker();
+        initRailSpy();
       }
     }
   } catch (e) {
@@ -2602,6 +2707,9 @@ window.addEventListener('popstate', async () => {
 window.addEventListener('DOMContentLoaded', () => {
   initMetricsUI();
   initScopeNav();
+  initRailNav();
+  syncRailMarker();
+  initRailSpy();
 });
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
   initMetricsUI();
