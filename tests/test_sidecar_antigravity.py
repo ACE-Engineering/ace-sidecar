@@ -116,7 +116,9 @@ def test_sessions_combines_claude_and_antigravity(tmp_path, mock_antigravity_bra
             f.write(json.dumps(line_item) + "\n")
 
     all_sess = insights.sessions(
-        root=str(claude_dir), antigravity_root=str(mock_antigravity_brain)
+        root=str(claude_dir),
+        antigravity_root=str(mock_antigravity_brain),
+        codex_root=str(tmp_path / "codex"),
     )
     assert len(all_sess) == 2
 

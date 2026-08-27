@@ -203,6 +203,19 @@ def _load_rates(model: str) -> Optional[Rates]:
                 source="google_default",
                 as_of="2026-08-01",
             )
+        if "codex" in model.lower() or "gpt-5" in model.lower() or "terra" in model.lower() or "openai" in model.lower():
+            # Fallback rates for OpenAI / Codex models (per 1M tokens)
+            is_mini = "mini" in model.lower() or "nano" in model.lower()
+            p_in = 0.50 if is_mini else 2.50
+            p_out = 2.00 if is_mini else 15.00
+            return Rates(
+                model=model,
+                input_per_mtok=p_in,
+                output_per_mtok=p_out,
+                cache_read_per_mtok=p_in * 0.1,
+                source="openai_default",
+                as_of="2026-08-01",
+            )
         return None
     try:
         import yaml

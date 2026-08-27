@@ -625,16 +625,142 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         else:
                             records = [data]
 
+            session_model = "gpt-5.3-codex"
+            current_calls: List[Dict[str, Any]] = []
+
             for rec in records:
                 stype = str(rec.get("type", "")).lower()
-                srole = str(rec.get("role", "")).lower()
-                ts_str = rec.get("timestamp") or rec.get("created_at")
+                payload = (
+                    rec.get("payload")
+                    if isinstance(rec.get("payload"), dict)
+                    else {}
+                )
+                ptype = str(payload.get("type", "")).lower() if payload else ""
+                srole = str(
+                    rec.get("role") or payload.get("role") or ""
+                ).lower()
+                ts_str = (
+                    rec.get("timestamp")
+                    or rec.get("created_at")
+                    or payload.get("timestamp")
+                )
                 at = _epoch(ts_str) if ts_str else os.path.getmtime(path)
+
+                if stype == "session_meta":
+                    if payload.get("cwd") and str(payload["cwd"]) not in cwds:
+                        cwds.append(str(payload["cwd"]))
+                    m = (
+                        (payload.get("base_instructions") or {})
+                        .get("provenance", {})
+                        .get("model")
+                    )
+                    if m:
+                        session_model = str(m)
+                    continue
+
+                if stype == "world_state":
+                    m = (payload.get("state") or {}).get("model")
+                    if m:
+                        session_model = str(m)
+                    env_cwd = (
+                        (
+                            ((payload.get("state") or {}).get("environments") or {})
+                            .get("environments")
+                            or {}
+                        )
+                        .get("local", {})
+                        .get("cwd")
+                    )
+                    if env_cwd and str(env_cwd) not in cwds:
+                        cwds.append(str(env_cwd))
+                    continue
 
                 if rec.get("cwd") and str(rec["cwd"]) not in cwds:
                     cwds.append(str(rec["cwd"]))
+                if payload.get("cwd") and str(payload["cwd"]) not in cwds:
+                    cwds.append(str(payload["cwd"]))
 
-                if srole == "user" or stype in ("user", "user_input", "prompt"):
+                # Handle response_item custom_tool_call
+                if stype == "response_item" and ptype == "custom_tool_call":
+                    nm = payload.get("name") or "tool"
+                    args = payload.get("input") or {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {"raw": args}
+                    cid = (
+                        payload.get("call_id")
+                        or payload.get("id")
+                        or f"call_{len(turns)}_{len(current_calls)}"
+                    )
+                    current_calls.append(
+                        {
+                            "id": cid,
+                            "name": nm,
+                            "target": _target(args),
+                            "sig": _sig(nm, args),
+                        }
+                    )
+                    continue
+
+                if stype == "response_item" and ptype == "custom_tool_call_output":
+                    cid = payload.get("call_id") or payload.get("id")
+                    out_body = payload.get("output") or ""
+                    if cid:
+                        result_bytes[cid] = _measure(out_body)
+                        dg = _digest(out_body)
+                        if dg:
+                            result_digests[cid] = dg
+                    events.append((at, "tool_result", (), at))
+                    continue
+
+                # Handle event_msg token_count
+                if stype == "event_msg" and ptype == "token_count":
+                    info = payload.get("info") or {}
+                    last_u = info.get("last_token_usage") or {}
+                    in_tok = int(last_u.get("input_tokens") or 0)
+                    cached_tok = int(last_u.get("cached_input_tokens") or 0)
+                    out_tok = int(last_u.get("output_tokens") or 0)
+                    cw_tok = int(last_u.get("cache_write_input_tokens") or 0)
+                    fresh_tok = (
+                        max(0, in_tok - cached_tok)
+                        if in_tok >= cached_tok
+                        else in_tok
+                    )
+
+                    blocks = {"text": 1}
+                    if current_calls:
+                        blocks["tool_use"] = len(current_calls)
+
+                    turn = {
+                        "model": session_model,
+                        "stop_reason": "end_turn",
+                        "input_tokens": fresh_tok,
+                        "output_tokens": out_tok,
+                        "cache_read_input_tokens": cached_tok,
+                        "cache_creation_input_tokens": cw_tok,
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                        "blocks": blocks,
+                        "calls": list(current_calls),
+                        "ts": (
+                            ts_str
+                            or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+                        ),
+                    }
+                    turns.append(turn)
+                    events.append(
+                        (at, "assistant", tuple(c["name"] for c in current_calls), at)
+                    )
+                    current_calls = []
+                    continue
+
+                if (
+                    srole == "user"
+                    or stype in ("user", "user_input", "prompt")
+                    or (stype == "response_item" and ptype == "message" and srole == "user")
+                ):
                     events.append((at, "prompt", (), at))
                     continue
 
@@ -745,7 +871,11 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                     if calls:
                         blocks["tool_use"] = len(calls)
 
-                    model = rec.get("model") or msg.get("model") or "gpt-5.3-codex"
+                    model = (
+                        rec.get("model")
+                        or msg.get("model")
+                        or session_model
+                    )
 
                     turn = {
                         "model": model,
@@ -2049,9 +2179,39 @@ def session_files(
                 elif atype == AGENT_CODEX:
                     srole = str(rec.get("role", "")).lower()
                     stype = str(rec.get("type", "")).lower()
-                    if not info["project"] and rec.get("cwd"):
-                        info["project"] = _tilde(str(rec["cwd"]))
-                    if srole == "assistant" or stype in (
+                    payload = (
+                        rec.get("payload")
+                        if isinstance(rec.get("payload"), dict)
+                        else {}
+                    )
+                    ptype = str(payload.get("type", "")).lower() if payload else ""
+                    prole = str(
+                        payload.get("role") or ""
+                    ).lower()
+
+                    if not info["project"]:
+                        if rec.get("cwd"):
+                            info["project"] = _tilde(str(rec["cwd"]))
+                        elif payload.get("cwd"):
+                            info["project"] = _tilde(str(payload["cwd"]))
+
+                    if stype == "session_meta":
+                        m = (
+                            (payload.get("base_instructions") or {})
+                            .get("provenance", {})
+                            .get("model")
+                        )
+                        if m:
+                            info["model"] = str(m)
+                    elif stype == "world_state":
+                        m = (payload.get("state") or {}).get("model")
+                        if m:
+                            info["model"] = str(m)
+                    elif stype == "event_msg" and ptype == "token_count":
+                        info["turns"] += 1
+                        if not info["model"]:
+                            info["model"] = "gpt-5.6-terra"
+                    elif srole == "assistant" or stype in (
                         "assistant",
                         "model",
                         "response",
@@ -2060,19 +2220,56 @@ def session_files(
                         info["model"] = (
                             rec.get("model")
                             or (rec.get("message") or {}).get("model")
+                            or info["model"]
                             or "gpt-5.3-codex"
                         )
                     elif (
                         srole == "user"
                         or stype in ("user", "user_input", "prompt")
+                        or (stype == "response_item" and ptype == "message" and prole == "user")
                     ) and not info["snippet"]:
-                        c = rec.get("content") or rec.get("text") or ""
-                        text = c if isinstance(c, str) else ""
+                        c = (
+                            rec.get("content")
+                            or rec.get("text")
+                            or payload.get("content")
+                            or ""
+                        )
+                        text = ""
+                        if isinstance(c, list):
+                            for b in c:
+                                if isinstance(b, dict) and b.get("type") in ("input_text", "text"):
+                                    txt_val = b.get("text") or ""
+                                    if txt_val and not txt_val.strip().startswith("<"):
+                                        text = txt_val
+                                        break
+                        elif isinstance(c, str):
+                            text = c
                         text = " ".join(str(text).split())
                         if text and not text.startswith("<"):
                             info["snippet"] = text[:110]
         except Exception:
             pass
+
+        # If snippet is still empty, check if Codex session_index has a thread_name
+        if atype == AGENT_CODEX and not info["snippet"]:
+            try:
+                idx_file = os.path.join(codex_root, "session_index.jsonl")
+                if not os.path.exists(idx_file):
+                    idx_file = os.path.join(os.path.dirname(codex_root), "session_index.jsonl")
+                if os.path.exists(idx_file):
+                    with open(idx_file, "r", encoding="utf-8", errors="replace") as fh:
+                        for l_idx in fh:
+                            l_idx = l_idx.strip()
+                            if l_idx:
+                                d_idx = json.loads(l_idx)
+                                sid_idx = d_idx.get("id") or ""
+                                if sid_idx and sid_idx in info["file"]:
+                                    if d_idx.get("thread_name"):
+                                        info["snippet"] = d_idx["thread_name"][:110]
+                                        break
+            except Exception:
+                pass
+
         out.append(info)
     return out
 
