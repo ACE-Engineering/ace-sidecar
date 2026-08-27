@@ -1411,8 +1411,8 @@ def _about() -> str:
 
     Answers the two questions the measurements above cannot: what the measuring thing *is*,
     and who to contact about it. One address for questions, feature requests, collaborations,
-    business and team rollout, with ``?subject=`` prefill as the routing — it degrades to a
-    plain mailto if the client ignores it.
+    and team rollout, with ``?subject=`` prefill as the routing — it degrades to a plain mailto
+    if the client ignores it.
 
     The banner names ACE Fleet because this page is the only thing most readers will ever see
     of it: a reader who arrives through the open-source sidecar has no way to tell that it is
@@ -1436,14 +1436,6 @@ def _about() -> str:
             "is managed across the team rather than rediscovered one laptop at a time. Ask for "
             "a rollout.",
             _mailto("ACE team deployment"),
-            CONTACT,
-        ),
-        (
-            "BUSINESS",
-            "Partnerships and business inquiries",
-            "Pricing, procurement, integrations, or anything that needs a conversation rather "
-            "than a download.",
-            _mailto("ACE business inquiry"),
             CONTACT,
         ),
     )
