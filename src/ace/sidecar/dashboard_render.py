@@ -62,6 +62,14 @@ border:1.5px solid #5b6169;background:transparent;flex:none}
 .mark::after{content:"";width:10px;height:10px;background:var(--mint)}
 .brand{padding:0 18px 18px}
 .brand .r{display:flex;align-items:center;gap:.6rem}
+/* The mark and wordmark lead; the repo link is an afterthought at the far end of the same
+   row, so the lockup still reads as one unit rather than two competing marks. Muted to
+   --ink-4 -- the weight of the "local sidecar" descriptor under it -- and resolving to full
+   ink only on hover: it is a way out of the page, not a thing to look at. */
+.brand .r .gh{margin-left:auto;display:grid;place-items:center;width:22px;height:22px;
+color:var(--ink-4);flex:none}
+.brand .r .gh:hover{color:var(--ink)}
+.brand .r .gh svg{width:15px;height:15px;display:block;fill:currentColor}
 .brand .n{font-family:var(--mono);color:var(--ink);font-size:.92rem;letter-spacing:.01em;
 font-weight:700}
 .brand .s{color:var(--ink-4);font-size:11.5px;margin-top:9px}
@@ -1394,6 +1402,7 @@ def _qa(f: Optional[Dict[str, Any]], rc: Dict[str, Any]) -> str:
 
 
 SITE = "https://acefleet.dev"
+REPO = "https://github.com/ACE-Engineering/ace-sidecar"
 CONTACT = "contact@acefleet.dev"
 
 
@@ -1668,6 +1677,21 @@ def _lever_note(d: Dict[str, Any]) -> str:
     )
 
 
+# The GitHub mark, inlined rather than linked: the dashboard is served by a local process
+# and is expected to render with no network at all, so a CDN <img> would be the one asset
+# that breaks offline. currentColor lets the anchor's :hover drive the fill.
+_GITHUB_ICON = (
+    "<svg viewBox='0 0 16 16' aria-hidden='true' focusable='false'><path d='M8 0C3.58 0 0 "
+    "3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37"
+    "-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 "
+    "1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87"
+    ".31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36"
+    ".09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 "
+    "3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38"
+    "A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z'/></svg>"
+)
+
+
 def _rail(d: Dict[str, Any]) -> str:
     live = d["live"]
     # Each entry jumps to a section already on the page -- one document, not five views.
@@ -1679,7 +1703,9 @@ def _rail(d: Dict[str, Any]) -> str:
     )
     levers = _lever_rail(d)
     return f"""<div class='rail'>
-<div class='brand'><div class='r'><span class='mark'></span><span class='n'>ACE</span></div>
+<div class='brand'><div class='r'><span class='mark'></span><span class='n'>ACE</span>
+<a class='gh' href='{REPO}' target='_blank' rel='noopener noreferrer'
+   aria-label='Source on GitHub'>{_GITHUB_ICON}</a></div>
 <div class='s'>local sidecar</div></div>
 <h4>Dashboards</h4>{nav}
 <h4>Sidecar</h4>
