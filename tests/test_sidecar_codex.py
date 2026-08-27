@@ -84,12 +84,75 @@ def mock_codex_sessions(tmp_path):
     with open(session_json, "w", encoding="utf-8") as f:
         json.dump(json_data, f)
 
+    # 3. Real Codex rollout event-stream format session
+    rollout_jsonl = codex_dir / "rollout_session_789.jsonl"
+    rollout_lines = [
+        {
+            "timestamp": "2026-08-27T16:33:16.163Z",
+            "ordinal": 0,
+            "type": "session_meta",
+            "payload": {
+                "session_id": "01a04410-f1f6-7873-a99b-697e594cb876",
+                "cwd": "/workspace/gateway-app",
+                "base_instructions": {
+                    "provenance": {"type": "model", "model": "gpt-5.6-terra"}
+                },
+            },
+        },
+        {
+            "timestamp": "2026-08-27T16:33:16.502Z",
+            "ordinal": 5,
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Build AI gateway"}],
+            },
+        },
+        {
+            "timestamp": "2026-08-27T16:33:23.593Z",
+            "ordinal": 14,
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "id": "ctc_1",
+                "call_id": "call_1",
+                "name": "exec",
+                "input": "{\"cmd\": \"ls -la\"}",
+            },
+        },
+        {
+            "timestamp": "2026-08-27T16:33:23.827Z",
+            "ordinal": 17,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 20000,
+                        "cached_input_tokens": 15000,
+                        "output_tokens": 200,
+                    },
+                    "last_token_usage": {
+                        "input_tokens": 20000,
+                        "cached_input_tokens": 15000,
+                        "output_tokens": 200,
+                        "cache_write_input_tokens": 0,
+                    },
+                },
+            },
+        },
+    ]
+    with open(rollout_jsonl, "w", encoding="utf-8") as f:
+        for line in rollout_lines:
+            f.write(json.dumps(line) + "\n")
+
     return codex_dir
 
 
 def test_scan_codex_transcripts(mock_codex_sessions):
     sess = insights._scan_codex(str(mock_codex_sessions))
-    assert len(sess) == 2
+    assert len(sess) == 3
 
     s_map = {s["session"]: s for s in sess}
 
@@ -121,6 +184,21 @@ def test_scan_codex_transcripts(mock_codex_sessions):
     assert t2["output_tokens"] == 150
     assert t2["cache_read_input_tokens"] == 300
     assert "/workspace/payments" in s2["cwds"]
+
+    # Verify session 3 (Rollout event stream JSONL)
+    s3 = s_map.get("codex_rollout_session_789") or next(
+        s for s in sess if "rollout_session_789" in s["session"]
+    )
+    assert s3["agent_type"] == "codex"
+    assert len(s3["turns"]) == 1
+    t3 = s3["turns"][0]
+    assert t3["model"] == "gpt-5.6-terra"
+    assert t3["input_tokens"] == 5000  # 20000 - 15000
+    assert t3["output_tokens"] == 200
+    assert t3["cache_read_input_tokens"] == 15000
+    assert len(t3["calls"]) == 1
+    assert t3["calls"][0]["name"] == "exec"
+    assert "/workspace/gateway-app" in s3["cwds"]
 
 
 def test_sessions_combines_claude_antigravity_and_codex(
@@ -197,7 +275,7 @@ def test_sessions_combines_claude_antigravity_and_codex(
         codex_root=str(mock_codex_sessions),
     )
 
-    assert len(all_sess) == 4  # 1 claude + 1 antigravity + 2 codex
+    assert len(all_sess) == 5  # 1 claude + 1 antigravity + 3 codex
 
     types = {s["agent_type"] for s in all_sess}
     assert types == {"claude", "antigravity", "codex"}
@@ -212,17 +290,17 @@ def test_sessions_combines_claude_antigravity_and_codex(
     assert agy_only[0]["agent_type"] == "antigravity"
 
     codex_only = insights.filter_range(all_sess, window=None, agent="codex")
-    assert len(codex_only) == 2
+    assert len(codex_only) == 3
     assert all(s["agent_type"] == "codex" for s in codex_only)
 
     # Test agent breakdown
     ab = insights.agent_breakdown(all_sess)
     assert "codex" in ab
-    assert ab["codex"]["sessions"] == 2
-    assert ab["codex"]["turns"] == 2
-    assert ab["codex"]["prompt_tokens"] == 1500  # (200+800) + (200+300)
-    assert ab["codex"]["output_tokens"] == 400  # 250 + 150
-    assert ab["codex"]["cache_read_tokens"] == 1100  # 800 + 300
+    assert ab["codex"]["sessions"] == 3
+    assert ab["codex"]["turns"] == 3
+    assert ab["codex"]["prompt_tokens"] == 21500  # (200+800) + (200+300) + (5000+15000)
+    assert ab["codex"]["output_tokens"] == 600  # 250 + 150 + 200
+    assert ab["codex"]["cache_read_tokens"] == 16100  # 800 + 300 + 15000
     assert ab["codex"]["cost_usd"] > 0.0
 
 
@@ -249,7 +327,7 @@ def test_dashboard_and_api_with_codex(tmp_path, mock_codex_sessions, monkeypatch
     assert resp_report.status_code == 200
     report_data = resp_report.json()
     assert "agent_breakdown" in report_data
-    assert report_data["agent_breakdown"]["codex"]["sessions"] == 2
+    assert report_data["agent_breakdown"]["codex"]["sessions"] == 3
 
     # 3. Prometheus metrics
     resp_metrics = client.get("/metrics")
