@@ -100,7 +100,7 @@ pip install --upgrade ace-sidecar
 ## Quickstart
 
 ```bash
-ace up --no-key
+ace up
 ```
 
 Then point your agent at it and open the dashboard:
