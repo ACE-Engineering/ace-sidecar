@@ -92,10 +92,19 @@ DEFAULT_RANGE = "30d"
 _BLOCKS = ("text", "thinking", "tool_use", "tool_result", "redacted_thinking")
 _TARGET_KEYS = ("file_path", "path", "notebook_path", "pattern", "command")
 
-# Result sizes are carried in bytes and divided by this to reach tokens (see
-# ``strategies.BYTES_PER_TOKEN``), so an image's token count is converted back to
-# byte-equivalents rather than introducing a second unit halfway down the pipeline.
-_CHARS_PER_TOKEN = 4.0
+# Result sizes are carried in bytes and divided by this to reach tokens, so an image's token
+# count is converted back to byte-equivalents rather than introducing a second unit halfway
+# down the pipeline.
+#
+# ALIASED, not copied. This is the same quantity as ``strategies.BYTES_PER_TOKEN`` and the two
+# must hold one value: `_measure` multiplies an image's real token count by it and
+# `strategies.score` divides by it, so images round-trip exactly when they agree and are
+# mispriced by their ratio when they do not — silently, with no error. They were two literals
+# and they drifted the moment one was corrected against measurement. One name now.
+#
+# Safe at module level: ``strategies`` imports nothing from here at import time (its own
+# consistency check imports lazily inside a function), so this does not close a cycle.
+from ace.sidecar.strategies import BYTES_PER_TOKEN as _CHARS_PER_TOKEN
 # Anthropic prices an image at roughly width*height/750 tokens.
 _IMAGE_TOKENS_PER_PIXEL = 1 / 750
 # Screenshot tools state the dimensions in the text block they emit alongside the image —
@@ -254,6 +263,7 @@ def _scan(root: str) -> List[Dict[str, Any]]:
         # message-id join below, for the reason given there.
         events: List[Any] = []
         end_of: Dict[int, float] = {}  # turn index -> last record's epoch
+        first_snippet: str = ""
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -272,6 +282,19 @@ def _scan(root: str) -> List[Dict[str, Any]]:
                         cwds.append(cwd)
                     if kind == "user":
                         content = msg.get("content")
+                        if not first_snippet:
+                            text = content if isinstance(content, str) else ""
+                            if isinstance(content, list):
+                                for b in content:
+                                    if (
+                                        isinstance(b, dict)
+                                        and b.get("type") == "text"
+                                    ):
+                                        text = b.get("text") or ""
+                                        break
+                            text = " ".join(str(text).split())
+                            if text and not text.startswith("<"):
+                                first_snippet = text[:110]
                         saw_result = False
                         if isinstance(content, list):
                             for b in content:
@@ -391,6 +414,10 @@ def _scan(root: str) -> List[Dict[str, Any]]:
                 "turns": turns,
                 "events": events,
                 "cwds": cwds,
+                "path": path,
+                "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+                "mtime": os.path.getmtime(path) if os.path.exists(path) else 0.0,
+                "snippet": first_snippet,
             }
             if is_sub:
                 parent = main_ids.get((parts[0], sid))
@@ -438,6 +465,7 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
         result_bytes: Dict[str, int] = {}
         result_digests: Dict[str, str] = {}
 
+        first_snippet: str = ""
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -455,6 +483,11 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                     at = _epoch(ts_str) if ts_str else os.path.getmtime(path)
 
                     if stype in ("USER_INPUT", "USER") or ssource == "USER_EXPLICIT":
+                        if not first_snippet:
+                            text = rec.get("content") or rec.get("text") or ""
+                            text = " ".join(str(text).split())
+                            if text and not text.startswith("<"):
+                                first_snippet = text[:110]
                         events.append((at, "prompt", (), at))
                         continue
 
@@ -571,6 +604,10 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                 "turns": turns,
                 "events": events,
                 "cwds": cwds,
+                "path": path,
+                "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+                "mtime": os.path.getmtime(path) if os.path.exists(path) else 0.0,
+                "snippet": first_snippet,
             }
             sessions.append(session)
 
@@ -597,6 +634,7 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
 
         result_bytes: Dict[str, int] = {}
         result_digests: Dict[str, str] = {}
+        first_snippet: str = ""
 
         try:
             records: List[Dict[str, Any]] = []
@@ -761,6 +799,25 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                     or stype in ("user", "user_input", "prompt")
                     or (stype == "response_item" and ptype == "message" and srole == "user")
                 ):
+                    if not first_snippet:
+                        c = (
+                            payload.get("content")
+                            if ptype == "message"
+                            else (rec.get("content") or rec.get("text") or "")
+                        )
+                        text = ""
+                        if isinstance(c, list):
+                            for b in c:
+                                if isinstance(b, dict) and b.get("type") in ("input_text", "text"):
+                                    txt_val = b.get("text") or ""
+                                    if txt_val and not txt_val.strip().startswith("<"):
+                                        text = txt_val
+                                        break
+                        elif isinstance(c, str):
+                            text = c
+                        text = " ".join(str(text).split())
+                        if text and not text.startswith("<"):
+                            first_snippet = text[:110]
                     events.append((at, "prompt", (), at))
                     continue
 
@@ -909,6 +966,25 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                     if cid_tag and cid_tag in result_digests:
                         c["digest"] = result_digests[cid_tag]
 
+            if not first_snippet:
+                try:
+                    idx_file = os.path.join(root, "session_index.jsonl")
+                    if not os.path.exists(idx_file):
+                        idx_file = os.path.join(os.path.dirname(root), "session_index.jsonl")
+                    if os.path.exists(idx_file):
+                        with open(idx_file, "r", encoding="utf-8", errors="replace") as fh:
+                            for l_idx in fh:
+                                l_idx = l_idx.strip()
+                                if l_idx:
+                                    d_idx = json.loads(l_idx)
+                                    sid_idx = d_idx.get("id") or ""
+                                    if sid_idx and sid_idx in path:
+                                        if d_idx.get("thread_name"):
+                                            first_snippet = d_idx["thread_name"][:110]
+                                            break
+                except Exception:
+                    pass
+
             events.sort(key=lambda e: e[0])
             name = f"codex_{sid}" if sid else f"codex_{len(sessions)+1}"
             session: Dict[str, Any] = {
@@ -918,6 +994,10 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                 "turns": turns,
                 "events": events,
                 "cwds": cwds,
+                "path": path,
+                "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+                "mtime": os.path.getmtime(path) if os.path.exists(path) else 0.0,
+                "snippet": first_snippet,
             }
             sessions.append(session)
 
@@ -1221,18 +1301,40 @@ def _repos(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"roots": roots, "commits": commits, "shas": shas}
 
 
+_git_root_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
+
+
 def _repos_cached(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
-    key = str(len(sess))
     now = time.time()
-    if (
-        _git_cache["repos"] is None
-        or _git_cache["key"] != key
-        or (now - _git_cache["at"] > _GIT_TTL)
-    ):
-        _git_cache["repos"] = _repos(sess)
-        _git_cache["key"] = key
-        _git_cache["at"] = now
-    return _git_cache["repos"]
+    roots: List[str] = []
+    seen_cwds = set()
+    for s in sess:
+        for cwd in s.get("cwds") or []:
+            if cwd not in seen_cwds:
+                seen_cwds.add(cwd)
+                if not any(cwd == r or cwd.startswith(r + os.sep) for r in roots):
+                    top = _git(cwd, "rev-parse", "--show-toplevel")
+                    if top and top[0] not in roots:
+                        roots.append(top[0])
+
+    commits: Dict[str, float] = {}
+    shas: Dict[str, set] = {}
+    for root in roots:
+        cached = _git_root_cache.get(root)
+        if cached and (now - cached[0] < _GIT_TTL):
+            root_commits = cached[1]
+        else:
+            root_commits = {}
+            for line in _git(root, "log", "--all", "--no-merges", "--pretty=%H %cI"):
+                sha, _, stamp = line.partition(" ")
+                at = _epoch(stamp)
+                if at:
+                    root_commits[sha] = at
+            _git_root_cache[root] = (now, root_commits)
+        commits.update(root_commits)
+        shas[root] = set(root_commits.keys())
+
+    return {"roots": roots, "commits": commits, "shas": shas}
 
 
 def _repo_of(cwds: List[str], roots: List[str]) -> Optional[str]:
@@ -2067,8 +2169,48 @@ def session_files(
     codex_root: Optional[str] = None,
     limit: int = 14,
     agent: Optional[str] = None,
+    all_sessions: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """The session files on disk, newest first, with a short content snapshot."""
+    if (
+        all_sessions is not None
+        and root is None
+        and antigravity_root is None
+        and codex_root is None
+    ):
+        target_agent = agent if agent and agent != AGENT_ALL else None
+        scoped = [
+            s
+            for s in all_sessions
+            if target_agent is None or s.get("agent_type") == target_agent
+        ]
+        out_mem: List[Dict[str, Any]] = []
+        for s in scoped[:limit]:
+            cwds = s.get("cwds") or []
+            proj = _tilde(str(cwds[0])) if cwds else ""
+            turns = s.get("turns") or []
+            last_turn = turns[-1] if turns else {}
+            last_ts = (
+                max((_epoch(t.get("ts")) or 0.0) for t in turns) if turns else 0.0
+            )
+            fpath = s.get("path") or ""
+            fname = os.path.basename(fpath) if fpath else f"{s.get('session')}.jsonl"
+            out_mem.append(
+                {
+                    "path": _tilde(fpath) if fpath else f"~/{s.get('session')}",
+                    "project": proj,
+                    "file": fname,
+                    "bytes": s.get("bytes") or 0,
+                    "mtime": s.get("mtime") or last_ts,
+                    "kind": s.get("kind", "main"),
+                    "agent_type": s.get("agent_type", AGENT_CLAUDE),
+                    "turns": len(turns),
+                    "model": last_turn.get("model", "") or s.get("model", ""),
+                    "snippet": s.get("snippet", ""),
+                }
+            )
+        return out_mem
+
     if root is None:
         root = TRANSCRIPT_ROOT
     if antigravity_root is None:
@@ -2336,7 +2478,7 @@ def _build_payload(
         "scorecards": (
             scorecards(scoped, agg.get("cost_usd") or 0.0) if agg["available"] else None
         ),
-        "files": session_files(agent=agent),
+        "files": session_files(agent=agent, all_sessions=all_sessions),
         "capture": capture or {},
         "recommendations": recommendations(agg, capture, sess=scoped),
         "local_skill_proposals": (
@@ -2352,7 +2494,7 @@ def _build_payload(
             ).get_installed_skills()
         ),
         "sources": {
-            "transcripts": [TRANSCRIPT_ROOT, ANTIGRAVITY_ROOT],
+            "transcripts": [TRANSCRIPT_ROOT, ANTIGRAVITY_ROOT, CODEX_ROOT],
             "telemetry_db": store_path,
             "external": None,
         },
@@ -2379,12 +2521,14 @@ def build(
     """
     all_sessions = sessions()
     store_path = getattr(store, "path", None)
+    fp = _capture_fingerprint(capture)
+    current_fp_key = _cache.get("key")
     cache_key = (
         range_key,
         agent,
-        _cache.get("key"),
+        current_fp_key,
         store_path,
-        _capture_fingerprint(capture),
+        fp,
     )
     payload = _build_cache.get(cache_key)
     if payload is None:
