@@ -2444,6 +2444,22 @@ _build_cache: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
 _BUILD_CACHE_MAX = 32
 
 
+def _lever_rail_payload(scoped: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The live half of the lever rail, or a payload saying why there isn't one.
+
+    Imported lazily and wrapped: ``ace.sidecar.levers`` discovers third-party packages, and
+    nothing a stranger's distribution does at import time may take this dashboard down. A
+    failure here costs the live column and leaves every measured figure on the page intact.
+    """
+    try:
+        from ace.sidecar.levers.rail import rail_payload
+
+        return rail_payload(scoped)
+    except Exception:
+        log.warning("[levers] rail payload failed; rendering headroom only", exc_info=True)
+        return {"status": "no_package", "note": "lever rail unavailable", "installed": []}
+
+
 def _build_payload(
     all_sessions: List[Dict[str, Any]],
     capture: Optional[Dict[str, Any]],
@@ -2478,6 +2494,11 @@ def _build_payload(
         "scorecards": (
             scorecards(scoped, agg.get("cost_usd") or 0.0) if agg["available"] else None
         ),
+        # The *measured* half of the lever rail, beside `scorecards`' simulated headroom.
+        # The two are different claims and the renderer must not merge them: headroom is a
+        # byte-turn estimate of what a lever would be worth, `levers` is what an installed
+        # one actually measured. Its `status` says which of the two exists.
+        "levers": _lever_rail_payload(scoped),
         "files": session_files(agent=agent, all_sessions=all_sessions),
         "capture": capture or {},
         "recommendations": recommendations(agg, capture, sess=scoped),

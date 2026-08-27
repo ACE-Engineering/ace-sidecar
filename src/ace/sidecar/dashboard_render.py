@@ -1696,17 +1696,67 @@ def _lever_rail(d: Dict[str, Any]) -> str:
     return "".join(out)
 
 
+def _lever_live(d: Dict[str, Any]) -> str:
+    """The measured half of the rail: what an installed lever actually did, if any did.
+
+    Rendered as its own block rather than merged into the headroom rows above, because the
+    two are different claims about different things. A headroom row is a byte-turn
+    *simulation* of what a lever would be worth if it existed. A row here is a lever that
+    exists, ran, and was priced exactly — token-counted, and net of the cache-write penalty
+    that an edit to already-cached content incurs.
+
+    Merging them into one number would be the single most misleading thing this page could
+    do, so they never share a row and the block below is absent unless something real was
+    measured.
+    """
+    lv = d.get("levers") or {}
+    status = lv.get("status") or "no_package"
+    if status == "no_package":
+        # The ordinary state for the OSS sidecar alone. The note under the rail already
+        # says so; a second empty block would be noise.
+        return ""
+
+    installed = lv.get("installed") or []
+    if status != "measured":
+        return (
+            f"<div class='sw dis' title='{escape(str(lv.get('note') or ''))}'>"
+            f"{len(installed)} lever{'' if len(installed) == 1 else 's'} installed"
+            f"<span class='pill soon'>{escape(status.replace('_', ' ').upper())}</span></div>"
+        )
+
+    by = lv.get("by_lever") or {}
+    labels = {i["id"]: i.get("label") or i["id"] for i in installed}
+    rows = sorted(by.items(), key=lambda kv: -kv[1])
+    out = ["<div class='h' style='margin-top:10px'>Measured &mdash; levers actually run</div>"]
+    for lever_id, usd in rows:
+        # A lever can measure NEGATIVE: an edit to content the cache already holds pays a
+        # re-write premium the saving has to earn back. Showing that is the point.
+        cls = "" if usd >= 0 else " z"
+        out.append(
+            f"<div class='sw' title='Measured on your own sessions, net of the cache-write "
+            f"penalty. Counter: {escape(str(lv.get('counter') or 'n/a'))}.'>"
+            f"{escape(labels.get(lever_id, lever_id))}"
+            f"<span class='pill{cls}'>{_usd(usd)}</span></div>"
+        )
+    return "".join(out)
+
+
 def _lever_note(d: Dict[str, Any]) -> str:
     sc = d.get("scorecards") or {}
     rows = sc.get("standalone") or []
+    lv = d.get("levers") or {}
+    status = lv.get("status") or "no_package"
+    # "none are wired" was a hardcoded truth of Phase 0 and stops being true the moment a
+    # lever package is installed. Read the actual state rather than asserting one.
+    wired = (
+        "none are wired — this release measures only."
+        if status == "no_package"
+        else f"{escape(str(lv.get('note') or ''))}."
+    )
     if not rows:
-        return (
-            "none are wired — this release measures only. No sessions in scope, "
-            "so there is no headroom to rank."
-        )
+        return f"{wired} No sessions in scope, so there is no headroom to rank."
     return (
-        "none are wired — this release measures only. Each lever is scored "
-        "<b>alone</b>, so these overlap and do not sum; "
+        f"{wired} Each lever is scored <b>alone</b>, so these overlap and do not sum; "
         "<a href='#s04'>§ 04</a> composes them."
     )
 
@@ -1752,6 +1802,7 @@ def _rail(d: Dict[str, Any]) -> str:
  sent.'>enforce<span class='pill soon'>PHASE 2</span></div>
 </div>
 <div class='ctl'><div class='h'>Levers(PHASE 1) &mdash; headroom on your data</div>{levers}
+  {_lever_live(d)}
   <div class='note-s'>{_lever_note(d)}</div>
 </div>
 <div class='ctl'><div class='h'>Data</div>
