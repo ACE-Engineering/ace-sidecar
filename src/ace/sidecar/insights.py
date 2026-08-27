@@ -33,14 +33,17 @@ log = logging.getLogger("ace.sidecar.insights")
 
 TRANSCRIPT_ROOT = os.path.expanduser("~/.claude/projects")
 ANTIGRAVITY_ROOT = os.path.expanduser("~/.gemini/antigravity/brain")
+CODEX_ROOT = os.path.expanduser("~/.codex/sessions")
 
 AGENT_ALL = "all"
 AGENT_CLAUDE = "claude"
 AGENT_ANTIGRAVITY = "antigravity"
+AGENT_CODEX = "codex"
 AGENTS = {
     AGENT_ALL: "All Agents",
     AGENT_CLAUDE: "Claude Code",
     AGENT_ANTIGRAVITY: "Antigravity (Google)",
+    AGENT_CODEX: "Codex (OpenAI)",
 }
 
 # Thresholds are measured findings from docs/22, not round numbers picked by feel.
@@ -574,11 +577,229 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
     return sessions
 
 
+def _scan_codex(root: str) -> List[Dict[str, Any]]:
+    """Codex/OpenAI Coding Agent transcripts -> corpus-shaped sessions."""
+    sessions: List[Dict[str, Any]] = []
+    if not os.path.isdir(root):
+        return sessions
+
+    paths = []
+    for dirpath, _, filenames in os.walk(root):
+        for fn in filenames:
+            if fn.endswith(".jsonl") or fn.endswith(".json"):
+                paths.append(os.path.join(dirpath, fn))
+
+    for path in sorted(paths):
+        turns: List[Dict[str, Any]] = []
+        events: List[Any] = []
+        cwds: List[str] = []
+        sid = os.path.splitext(os.path.basename(path))[0]
+
+        result_bytes: Dict[str, int] = {}
+        result_digests: Dict[str, str] = {}
+
+        try:
+            records: List[Dict[str, Any]] = []
+            if path.endswith(".jsonl"):
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            records.append(json.loads(line))
+                        except Exception:
+                            continue
+            else:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    data = json.load(fh)
+                    if isinstance(data, list):
+                        records = [d for d in data if isinstance(d, dict)]
+                    elif isinstance(data, dict):
+                        if "messages" in data and isinstance(data["messages"], list):
+                            records = [d for d in data["messages"] if isinstance(d, dict)]
+                            if "cwd" in data:
+                                cwds.append(str(data["cwd"]))
+                        elif "turns" in data and isinstance(data["turns"], list):
+                            records = [d for d in data["turns"] if isinstance(d, dict)]
+                        else:
+                            records = [data]
+
+            for rec in records:
+                stype = str(rec.get("type", "")).lower()
+                srole = str(rec.get("role", "")).lower()
+                ts_str = rec.get("timestamp") or rec.get("created_at")
+                at = _epoch(ts_str) if ts_str else os.path.getmtime(path)
+
+                if rec.get("cwd") and str(rec["cwd"]) not in cwds:
+                    cwds.append(str(rec["cwd"]))
+
+                if srole == "user" or stype in ("user", "user_input", "prompt"):
+                    events.append((at, "prompt", (), at))
+                    continue
+
+                if srole in ("tool", "function") or stype in (
+                    "tool_result",
+                    "function_call_output",
+                    "tool_output",
+                ):
+                    body = (
+                        rec.get("content")
+                        or rec.get("output")
+                        or rec.get("result")
+                        or ""
+                    )
+                    tid = (
+                        rec.get("tool_call_id")
+                        or rec.get("tool_use_id")
+                        or rec.get("id")
+                        or f"call_{len(events)}"
+                    )
+                    result_bytes[tid] = _measure(body)
+                    dg = _digest(body)
+                    if dg:
+                        result_digests[tid] = dg
+                    events.append((at, "tool_result", (), at))
+                    continue
+
+                if srole == "assistant" or stype in ("assistant", "model", "response"):
+                    content = rec.get("content") or rec.get("text") or ""
+                    msg = (
+                        rec.get("message")
+                        if isinstance(rec.get("message"), dict)
+                        else {}
+                    )
+                    if not content and msg:
+                        content = msg.get("content") or ""
+
+                    tool_calls = (
+                        rec.get("tool_calls")
+                        or rec.get("calls")
+                        or msg.get("tool_calls")
+                        or []
+                    )
+
+                    calls = []
+                    for idx_c, tc in enumerate(tool_calls):
+                        if isinstance(tc, dict):
+                            fn_obj = (
+                                tc.get("function")
+                                if isinstance(tc.get("function"), dict)
+                                else tc
+                            )
+                            nm = fn_obj.get("name") or "tool"
+                            args = (
+                                fn_obj.get("arguments")
+                                or fn_obj.get("args")
+                                or fn_obj.get("input")
+                                or {}
+                            )
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {"raw": args}
+                            call_id = tc.get("id") or f"call_{len(turns)}_{idx_c}"
+                            calls.append(
+                                {
+                                    "id": call_id,
+                                    "name": nm,
+                                    "target": _target(args),
+                                    "sig": _sig(nm, args),
+                                }
+                            )
+
+                    usage = rec.get("usage") or msg.get("usage") or {}
+                    in_tok = int(
+                        usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+                    )
+                    out_tok = int(
+                        usage.get("completion_tokens")
+                        or usage.get("output_tokens")
+                        or 0
+                    )
+
+                    cached_details = usage.get("prompt_tokens_details") or {}
+                    cr_tok = int(
+                        cached_details.get("cached_tokens")
+                        or usage.get("cache_read_input_tokens")
+                        or usage.get("cached_prompt_tokens")
+                        or 0
+                    )
+                    cw_tok = int(usage.get("cache_creation_input_tokens") or 0)
+
+                    fresh_tok = (
+                        max(0, in_tok - cr_tok) if in_tok >= cr_tok else in_tok
+                    )
+
+                    if not in_tok and content:
+                        fresh_tok = max(10, len(str(content)) // 4)
+                    if not out_tok:
+                        out_tok = (
+                            max(5, len(str(content)) // 8) if content else 10
+                        )
+
+                    blocks = {}
+                    if content:
+                        blocks["text"] = 1
+                    if calls:
+                        blocks["tool_use"] = len(calls)
+
+                    model = rec.get("model") or msg.get("model") or "gpt-5.3-codex"
+
+                    turn = {
+                        "model": model,
+                        "stop_reason": rec.get("stop_reason") or "end_turn",
+                        "input_tokens": fresh_tok,
+                        "output_tokens": out_tok,
+                        "cache_read_input_tokens": cr_tok,
+                        "cache_creation_input_tokens": cw_tok,
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                        "blocks": blocks,
+                        "calls": calls,
+                        "ts": (
+                            ts_str
+                            or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))
+                        ),
+                    }
+                    turns.append(turn)
+                    events.append(
+                        (at, "assistant", tuple(c["name"] for c in calls), at)
+                    )
+        except Exception:
+            continue
+
+        if turns:
+            for t in turns:
+                for c in t["calls"]:
+                    cid_tag = c.pop("id", None)
+                    if cid_tag and cid_tag in result_bytes:
+                        c["result_bytes"] = result_bytes[cid_tag]
+                    if cid_tag and cid_tag in result_digests:
+                        c["digest"] = result_digests[cid_tag]
+
+            events.sort(key=lambda e: e[0])
+            name = f"codex_{sid}" if sid else f"codex_{len(sessions)+1}"
+            session: Dict[str, Any] = {
+                "session": name,
+                "kind": "main",
+                "agent_type": AGENT_CODEX,
+                "turns": turns,
+                "events": events,
+                "cwds": cwds,
+            }
+            sessions.append(session)
+
+    return sessions
+
+
 def sessions(
-    root: str = TRANSCRIPT_ROOT,
-    antigravity_root: str = ANTIGRAVITY_ROOT,
+    root: Optional[str] = None,
+    antigravity_root: Optional[str] = None,
+    codex_root: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Cached scan of Claude Code and Antigravity transcripts.
+    """Cached scan of Claude Code, Antigravity, and Codex transcripts.
 
     The cache key is a fingerprint over every transcript file, so building it means a
     recursive glob plus a stat per file — ~0.35s against a real transcript directory, paid
@@ -588,18 +809,26 @@ def sessions(
     live agent, so the window has to stay well under the time it takes a user to notice a
     turn is missing; a couple of seconds buys the whole toggle without being perceptible.
     """
+    if root is None:
+        root = TRANSCRIPT_ROOT
+    if antigravity_root is None:
+        antigravity_root = ANTIGRAVITY_ROOT
+    if codex_root is None:
+        codex_root = CODEX_ROOT
+
     now = time.time()
     if (
         _cache["sessions"] is not None
-        and _cache["roots"] == (root, antigravity_root)
+        and _cache["roots"] == (root, antigravity_root, codex_root)
         and now - _cache["at"] < _SESSIONS_TTL
     ):
         return _cache["sessions"]
 
     c_exists = os.path.isdir(root)
     a_exists = os.path.isdir(antigravity_root)
+    x_exists = os.path.isdir(codex_root)
 
-    if not c_exists and not a_exists:
+    if not c_exists and not a_exists and not x_exists:
         return []
 
     c_files = (
@@ -612,16 +841,22 @@ def sessions(
         if a_exists
         else []
     )
-    all_files = c_files + a_files
+    x_files = (
+        glob.glob(os.path.join(codex_root, "**", "*.json*"), recursive=True)
+        if x_exists
+        else []
+    )
+    all_files = c_files + a_files + x_files
 
     key = (
         f"{len(all_files)}:{max((os.path.getmtime(f) for f in all_files), default=0):.0f}:"
-        f"{root}:{antigravity_root}"
+        f"{root}:{antigravity_root}:{codex_root}"
     )
     if _cache["key"] != key:
         c_sess = _scan(root) if c_exists else []
         a_sess = _scan_antigravity(antigravity_root) if a_exists else []
-        combined = c_sess + a_sess
+        x_sess = _scan_codex(codex_root) if x_exists else []
+        combined = c_sess + a_sess + x_sess
         combined.sort(
             key=lambda s: (
                 max((_epoch(t.get("ts")) or 0.0) for t in s["turns"])
@@ -637,7 +872,7 @@ def sessions(
     # the freshness window restarts. Refreshing only on a miss would expire the window on
     # every call once the data settled, putting the glob back in the toggle path for good.
     _cache["at"] = time.time()
-    _cache["roots"] = (root, antigravity_root)
+    _cache["roots"] = (root, antigravity_root, codex_root)
     return _cache["sessions"] or []
 
 
@@ -701,6 +936,17 @@ def agent_breakdown(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         AGENT_ANTIGRAVITY: {
             "agent_type": AGENT_ANTIGRAVITY,
             "label": "Antigravity (Google)",
+            "sessions": 0,
+            "turns": 0,
+            "prompt_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cost_usd": 0.0,
+            "models": set(),
+        },
+        AGENT_CODEX: {
+            "agent_type": AGENT_CODEX,
+            "label": "Codex (OpenAI)",
             "sessions": 0,
             "turns": 0,
             "prompt_tokens": 0,
@@ -1686,22 +1932,39 @@ def _tilde(path: str) -> str:
 
 
 def session_files(
-    root: str = TRANSCRIPT_ROOT,
-    antigravity_root: str = ANTIGRAVITY_ROOT,
+    root: Optional[str] = None,
+    antigravity_root: Optional[str] = None,
+    codex_root: Optional[str] = None,
     limit: int = 14,
     agent: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """The session files on disk, newest first, with a short content snapshot."""
+    if root is None:
+        root = TRANSCRIPT_ROOT
+    if antigravity_root is None:
+        antigravity_root = ANTIGRAVITY_ROOT
+    if codex_root is None:
+        codex_root = CODEX_ROOT
+
     out: List[Dict[str, Any]] = []
     paths: List[tuple] = []
     if (not agent or agent in (AGENT_ALL, AGENT_CLAUDE)) and os.path.isdir(root):
         for p in glob.glob(os.path.join(root, "**", "*.jsonl"), recursive=True):
             paths.append((p, AGENT_CLAUDE))
-    if (not agent or agent in (AGENT_ALL, AGENT_ANTIGRAVITY)) and os.path.isdir(antigravity_root):
+    if (not agent or agent in (AGENT_ALL, AGENT_ANTIGRAVITY)) and os.path.isdir(
+        antigravity_root
+    ):
         for dirpath, _, filenames in os.walk(antigravity_root):
             for fn in filenames:
                 if fn in ("transcript.jsonl", "transcript_full.jsonl"):
                     paths.append((os.path.join(dirpath, fn), AGENT_ANTIGRAVITY))
+    if (not agent or agent in (AGENT_ALL, AGENT_CODEX)) and os.path.isdir(
+        codex_root
+    ):
+        for dirpath, _, filenames in os.walk(codex_root):
+            for fn in filenames:
+                if fn.endswith(".jsonl") or fn.endswith(".json"):
+                    paths.append((os.path.join(dirpath, fn), AGENT_CODEX))
 
     paths.sort(key=lambda item: os.path.getmtime(item[0]), reverse=True)
     for path, atype in paths[:limit]:
@@ -1718,43 +1981,96 @@ def session_files(
             "snippet": "",
         }
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except Exception:
-                        continue
-                    if atype == AGENT_CLAUDE:
-                        msg = rec.get("message") or {}
-                        if not info["project"] and rec.get("cwd"):
-                            info["project"] = _tilde(rec["cwd"])
-                        if rec.get("type") == "assistant" and (msg.get("usage") or {}):
-                            info["turns"] += 1
-                            info["model"] = msg.get("model") or info["model"]
-                        elif rec.get("type") == "user" and not info["snippet"]:
-                            c = msg.get("content")
-                            text = c if isinstance(c, str) else ""
-                            if isinstance(c, list):
-                                for b in c:
-                                    if isinstance(b, dict) and b.get("type") == "text":
-                                        text = b.get("text") or ""
-                                        break
-                            text = " ".join(str(text).split())
-                            if text and not text.startswith("<"):
-                                info["snippet"] = text[:110]
-                    else:
-                        stype = str(rec.get("type", "")).upper()
-                        if stype in ("PLANNER_RESPONSE", "MODEL_RESPONSE", "MODEL"):
-                            info["turns"] += 1
-                            info["model"] = rec.get("model") or "gemini-3.6-flash"
-                        elif stype in ("USER_INPUT", "USER") and not info["snippet"]:
-                            text = rec.get("content") or rec.get("text") or ""
-                            text = " ".join(str(text).split())
-                            if text and not text.startswith("<"):
-                                info["snippet"] = text[:110]
+            records: List[Dict[str, Any]] = []
+            if path.endswith(".jsonl"):
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if line:
+                            try:
+                                records.append(json.loads(line))
+                            except Exception:
+                                pass
+            else:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    data = json.load(fh)
+                    if isinstance(data, list):
+                        records = [d for d in data if isinstance(d, dict)]
+                    elif isinstance(data, dict):
+                        if "messages" in data and isinstance(
+                            data["messages"], list
+                        ):
+                            records = [
+                                d for d in data["messages"] if isinstance(d, dict)
+                            ]
+                            if "cwd" in data:
+                                info["project"] = _tilde(str(data["cwd"]))
+                        elif "turns" in data and isinstance(data["turns"], list):
+                            records = [
+                                d for d in data["turns"] if isinstance(d, dict)
+                            ]
+                        else:
+                            records = [data]
+
+            for rec in records:
+                if atype == AGENT_CLAUDE:
+                    msg = rec.get("message") or {}
+                    if not info["project"] and rec.get("cwd"):
+                        info["project"] = _tilde(rec["cwd"])
+                    if rec.get("type") == "assistant" and (
+                        msg.get("usage") or {}
+                    ):
+                        info["turns"] += 1
+                        info["model"] = msg.get("model") or info["model"]
+                    elif rec.get("type") == "user" and not info["snippet"]:
+                        c = msg.get("content")
+                        text = c if isinstance(c, str) else ""
+                        if isinstance(c, list):
+                            for b in c:
+                                if (
+                                    isinstance(b, dict)
+                                    and b.get("type") == "text"
+                                ):
+                                    text = b.get("text") or ""
+                                    break
+                        text = " ".join(str(text).split())
+                        if text and not text.startswith("<"):
+                            info["snippet"] = text[:110]
+                elif atype == AGENT_ANTIGRAVITY:
+                    stype = str(rec.get("type", "")).upper()
+                    if stype in ("PLANNER_RESPONSE", "MODEL_RESPONSE", "MODEL"):
+                        info["turns"] += 1
+                        info["model"] = rec.get("model") or "gemini-3.6-flash"
+                    elif stype in ("USER_INPUT", "USER") and not info["snippet"]:
+                        text = rec.get("content") or rec.get("text") or ""
+                        text = " ".join(str(text).split())
+                        if text and not text.startswith("<"):
+                            info["snippet"] = text[:110]
+                elif atype == AGENT_CODEX:
+                    srole = str(rec.get("role", "")).lower()
+                    stype = str(rec.get("type", "")).lower()
+                    if not info["project"] and rec.get("cwd"):
+                        info["project"] = _tilde(str(rec["cwd"]))
+                    if srole == "assistant" or stype in (
+                        "assistant",
+                        "model",
+                        "response",
+                    ):
+                        info["turns"] += 1
+                        info["model"] = (
+                            rec.get("model")
+                            or (rec.get("message") or {}).get("model")
+                            or "gpt-5.3-codex"
+                        )
+                    elif (
+                        srole == "user"
+                        or stype in ("user", "user_input", "prompt")
+                    ) and not info["snippet"]:
+                        c = rec.get("content") or rec.get("text") or ""
+                        text = c if isinstance(c, str) else ""
+                        text = " ".join(str(text).split())
+                        if text and not text.startswith("<"):
+                            info["snippet"] = text[:110]
         except Exception:
             pass
         out.append(info)
