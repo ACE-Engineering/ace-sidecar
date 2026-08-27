@@ -99,22 +99,14 @@ pip install --upgrade ace-sidecar
 
 ## Quickstart
 
+Start the sidecar and open the dashboard:
+
 ```bash
 ace up
-```
-
-Then point your agent at it and open the dashboard:
-
-```bash
-eval "$(ace env)"                       # exports ANTHROPIC_BASE_URL
 open http://127.0.0.1:8787/dashboard
 ```
 
-Use your coding agent as normal — turns appear live, with your transcript history already loaded.
-
-On a Claude subscription, start with `ace up --no-key` (Claude Code sends its own credential and the sidecar relays it), or put `{"no_key": true}` in `~/.ace/config.json`. `ace up --help` lists every flag.
-
-Antigravity needs no setup and no base URL: it is read from its transcripts on disk, so its sessions appear in the dashboard whether or not the sidecar was running at the time. Only Claude Code routes through the proxy.
+Use your coding agents as normal (**Claude Code**, **Google Antigravity**, or **OpenAI Codex**) — existing and new sessions appear automatically, with historical transcripts, token counts, and spend calculations loaded directly from disk.
 
 ---
 
