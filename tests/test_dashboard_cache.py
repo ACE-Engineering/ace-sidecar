@@ -70,15 +70,18 @@ def transcripts(tmp_path, monkeypatch):
     """
     root = tmp_path / "claude"
     anti = tmp_path / "antigravity"
+    codex = tmp_path / "codex"
     root.mkdir()
     anti.mkdir()
+    codex.mkdir()
     monkeypatch.setattr(I, "TRANSCRIPT_ROOT", str(root))
     monkeypatch.setattr(I, "ANTIGRAVITY_ROOT", str(anti))
-    monkeypatch.setattr(I.sessions, "__defaults__", (str(root), str(anti)))
+    monkeypatch.setattr(I, "CODEX_ROOT", str(codex))
+    monkeypatch.setattr(I.sessions, "__defaults__", (str(root), str(anti), str(codex)))
     monkeypatch.setattr(
         I.session_files,
         "__defaults__",
-        (str(root), str(anti)) + I.session_files.__defaults__[2:],
+        (str(root), str(anti), str(codex)) + I.session_files.__defaults__[3:],
     )
 
     def _reset() -> None:

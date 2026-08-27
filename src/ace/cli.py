@@ -145,6 +145,17 @@ def cmd_up(args: argparse.Namespace) -> int:
 
         insights_mod.ANTIGRAVITY_ROOT = os.path.expanduser(antigravity_dir)
 
+    codex_dir = resolve(
+        "codex_dir",
+        args.codex_dir,
+        config,
+        "ACE_SIDECAR_CODEX_DIR",
+    )
+    if codex_dir:
+        import ace.sidecar.insights as insights_mod
+
+        insights_mod.CODEX_ROOT = os.path.expanduser(codex_dir)
+
     capture = resolve("capture", args.capture, config, "ACE_SIDECAR_CAPTURE")
 
     if not _is_loopback(host) and not allow_remote:
@@ -324,6 +335,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Antigravity transcript brain directory (config: antigravity_dir, "
         "env: ACE_SIDECAR_ANTIGRAVITY_DIR, default: ~/.gemini/antigravity/brain)",
+    )
+    up.add_argument(
+        "--codex-dir",
+        default=None,
+        metavar="PATH",
+        help="Codex session transcripts directory (config: codex_dir, "
+        "env: ACE_SIDECAR_CODEX_DIR, default: ~/.codex/sessions)",
     )
     up.add_argument(
         "--telemetry-db",
