@@ -1758,7 +1758,7 @@ def render(d: Dict[str, Any]) -> str:
     b.append("<div class='wrap'>")
     b.append(
         "<h1>Heterogeneous Coding Agent Observability</h1><div class='lede'>Unified observability, "
-        "cost analysis, and context efficiency across Claude Code & Antigravity (Google) agents. Nothing leaves this machine.</div>"
+        "cost analysis, and context efficiency across Claude Code, Antigravity (Google), & Codex (OpenAI) agents. Nothing leaves this machine.</div>"
     )
     cur_agent = d.get("agent", "all")
     scope = "".join(
@@ -2167,14 +2167,14 @@ def render(d: Dict[str, Any]) -> str:
             "09",
             "SESSIONS",
             "Observed agent session transcripts.",
-            "On disk, this machine only — read from Claude Code & Antigravity logs.",
+            "On disk, this machine only — read from Claude Code, Antigravity, & Codex logs.",
             "LOCAL",
         )
     )
     files = d.get("files") or []
     rows = "".join(
         f"<tr><td class='m' style='color:var(--ink-3)'>{escape(_mask_home(fi['path']))}</td>"
-        f"<td><span class='pill' style='{('color:var(--mint);border-color:#1d3b2e;background:#0F231A' if fi.get('agent_type')=='antigravity' else 'color:var(--blue);border-color:#1e355b;background:#0d1c33')}'>{escape(fi.get('agent_type', 'claude'))}</span></td>"
+        f"<td><span class='pill' style='{('color:var(--mint);border-color:#1d3b2e;background:#0F231A' if fi.get('agent_type')=='antigravity' else 'color:#10a37f;border-color:#14532d;background:#052e16' if fi.get('agent_type')=='codex' else 'color:var(--blue);border-color:#1e355b;background:#0d1c33')}'>{escape(fi.get('agent_type', 'claude'))}</span></td>"
         f"<td class='m' style='color:var(--ink-4)'>{escape(_mask_home(fi['project'] or '—'))}</td>"
         f"<td>{escape(fi['kind'])}</td><td class='num'>{_f(fi['turns'])}</td>"
         f"<td class='num'>{_kb(fi['bytes'])}</td><td class='num'>{_ago(fi['mtime'])}</td>"
@@ -2184,12 +2184,12 @@ def render(d: Dict[str, Any]) -> str:
         for fi in files
     )
     b.append(
-        "<div class='pan'><div class='ph'><span>~/.claude/projects &amp; ~/.gemini/antigravity/brain</span>"
+        "<div class='pan'><div class='ph'><span>~/.claude/projects, ~/.gemini/antigravity/brain &amp; ~/.codex/sessions</span>"
         f"<span class='live'><i></i>{len(files)} FILES</span></div><div class='pb'>"
         "<table><tr><th>transcript</th><th>agent</th><th>working directory</th><th>kind</th>"
         "<th class='num'>turns</th><th class='num'>size</th><th class='num'>modified</th>"
         f"<th>first prompt</th></tr>{rows}</table>"
-        "<div class='exp'>Scans local session transcripts across Claude Code and Antigravity (Google) agent logs on disk. "
+        "<div class='exp'>Scans local session transcripts across Claude Code, Antigravity (Google), and Codex (OpenAI) agent logs on disk. "
         "Session telemetry and token metrics are normalized across heterogeneous agent engines.</div></div></div>"
     )
 

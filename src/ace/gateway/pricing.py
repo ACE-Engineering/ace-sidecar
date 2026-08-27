@@ -227,7 +227,12 @@ def _load_rates(model: str) -> Optional[Rates]:
                 output_per_mtok=float(p.get("out", 0)),
                 cache_read_per_mtok=float(
                     p.get(
-                        "cached_in", p_in * 0.25 if "gemini" in model.lower() else p_in
+                        "cached_in",
+                        p_in * 0.25
+                        if "gemini" in model.lower()
+                        else p_in * 0.1
+                        if ("openai" in str(provider or "").lower() or "codex" in model.lower())
+                        else p_in,
                     )
                 ),
                 source=str(offering.get("source") or provider or ""),
@@ -248,6 +253,19 @@ def _load_rates(model: str) -> Optional[Rates]:
             cache_read_per_mtok=p_in * 0.25,
             source="google_default",
             as_of="2026-08-01",
+        )
+    if "codex" in model.lower() or "gpt-5" in model.lower():
+        # Fallback rates for Codex/GPT-5 models (per 1M tokens)
+        is_mini = "mini" in model.lower() or "nano" in model.lower()
+        p_in = 0.25 if is_mini else 1.75
+        p_out = 2.00 if is_mini else 14.00
+        return Rates(
+            model=model,
+            input_per_mtok=p_in,
+            output_per_mtok=p_out,
+            cache_read_per_mtok=p_in * 0.1,
+            source="openai_default",
+            as_of="2026-07-23",
         )
     return None
 
