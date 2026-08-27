@@ -201,12 +201,7 @@ def cmd_up(args: argparse.Namespace) -> int:
     )
     url = f"http://{host}:{port}"
 
-    print(f"\n  ACE sidecar → {base_url or 'https://api.anthropic.com'}")
-    creds = "stored API key" if api_key else "caller-supplied (OAuth or x-api-key)"
-    print(f"  auth: loopback-trust · credential: {creds} · levers: none (Phase 0)\n")
-    print("  Point Claude Code at it:\n")
-    print(f"      export ANTHROPIC_BASE_URL={url}\n")
-    print(f"  Dashboard: {url}/dashboard")
+    print(f"\n  Dashboard: {url}/dashboard")
     print(f"  Health:    {url}/healthz")
     if store:
         print(f"  Telemetry: {store.path}  (local SQLite, never uploaded)")
