@@ -256,6 +256,10 @@ def _scan_transcript_logs() -> Tuple[List[List[Tuple[str, str]]], Counter]:
     return sequences, prompts
 
 
+_proposals_cache: Dict[str, Any] = {"key": None, "at": 0.0, "result": None}
+_PROPOSALS_TTL = 30.0
+
+
 def mine_local_skills(
     sessions: List[Dict[str, Any]] = None, workspace_dir: str = None
 ) -> List[Dict[str, Any]]:
@@ -263,6 +267,18 @@ def mine_local_skills(
 
     Filters out noisy read-only sequences and curates high-quality SKILL.md definitions.
     """
+    import time
+
+    now = time.time()
+    workspace = workspace_dir or os.getcwd()
+    cache_key = (workspace, len(sessions) if sessions is not None else -1)
+    if (
+        _proposals_cache["result"] is not None
+        and _proposals_cache["key"] == cache_key
+        and (now - _proposals_cache["at"] < _PROPOSALS_TTL)
+    ):
+        return _proposals_cache["result"]
+
     sequences, prompts = _scan_transcript_logs()
     installed_list = get_installed_skills(workspace_dir)
     installed_ids = {s["id"]: s for s in installed_list}
@@ -470,7 +486,11 @@ Curated workflow mined from {count} repeated transcript action sequences.
             }
         )
 
-    return proposals[:5]
+    out = proposals[:5]
+    _proposals_cache["key"] = cache_key
+    _proposals_cache["at"] = now
+    _proposals_cache["result"] = out
+    return out
 
 
 def install_local_skill(

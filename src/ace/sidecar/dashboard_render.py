@@ -2549,9 +2549,63 @@ function initMetricsUI() {
   }
 }
 
-window.addEventListener('DOMContentLoaded', initMetricsUI);
+function initScopeNav() {
+  document.querySelectorAll('.scope a').forEach(a => {
+    a.onclick = async function(e) {
+      const href = this.getAttribute('href');
+      if (!href || !href.startsWith('/dashboard')) return;
+      e.preventDefault();
+      const mainEl = document.querySelector('.main');
+      if (mainEl) mainEl.style.opacity = '0.7';
+      try {
+        const res = await fetch(href);
+        if (res.ok) {
+          const html = await res.text();
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const newMain = doc.querySelector('.main');
+          if (newMain && mainEl) {
+            mainEl.innerHTML = newMain.innerHTML;
+            mainEl.style.opacity = '1';
+            window.history.pushState({}, '', href);
+            initScopeNav();
+            initMetricsUI();
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Fast filter switch failed:', err);
+      }
+      window.location.href = href;
+    };
+  });
+}
+
+window.addEventListener('popstate', async () => {
+  try {
+    const res = await fetch(window.location.href);
+    if (res.ok) {
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const newMain = doc.querySelector('.main');
+      const mainEl = document.querySelector('.main');
+      if (newMain && mainEl) {
+        mainEl.innerHTML = newMain.innerHTML;
+        initScopeNav();
+        initMetricsUI();
+      }
+    }
+  } catch (e) {
+    window.location.reload();
+  }
+});
+
+window.addEventListener('DOMContentLoaded', () => {
+  initMetricsUI();
+  initScopeNav();
+});
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
   initMetricsUI();
+  initScopeNav();
 }
 
 async function installSkill(skillId, btn) {
