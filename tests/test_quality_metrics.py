@@ -494,3 +494,122 @@ def test_quality_metrics_by_task_category() -> None:
     assert "CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN" in html or "CAPABILITY & PERFORMANCE BY CODING TASK DOMAIN" in html
     assert "UI &amp; Frontend" in html or "UI & Frontend" in html
 
+
+def test_extended_quality_metrics_turns_time_fixes_verbosity() -> None:
+    from ace.sidecar.insights import _count_comment_and_code_lines, _classify_call
+
+    # Test comment and code line parsing
+    code_sample = """# Header comment
+def solve():
+    // inline comment
+    x = 10
+    y = 20
+    return x + y
+"""
+    c_cnt, k_cnt = _count_comment_and_code_lines(code_sample)
+    assert c_cnt == 2
+    assert k_cnt == 4
+
+    # Test _classify_call with CodeContent
+    call_info = _classify_call("write_to_file", {"TargetFile": "src/main.py", "CodeContent": code_sample})
+    assert call_info["is_edit"] is True
+    assert call_info["comment_lines"] == 2
+    assert call_info["code_lines"] == 4
+
+    # Test session with multiple turns, follow-up edits on same file, timestamps, output tokens
+    sess_complex = [
+        {
+            "session": "sess_1",
+            "agent_type": "claude",
+            "cwds": ["/test"],
+            "events": [
+                (1000.0, "user_turn", {}, 1000.0),
+                (1120.0, "assistant_turn", {}, 1120.0),  # 120s duration = 2.0 mins
+            ],
+            "turns": [
+                {
+                    "input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "output_tokens": 200,
+                    "model": "claude-sonnet-4-6",
+                    "calls": [
+                        {
+                            "name": "write_to_file",
+                            "raw_target": "src/app.py",
+                            "is_edit": True,
+                            "is_src_file": True,
+                            "comment_lines": 5,
+                            "code_lines": 20,
+                        },
+                        {
+                            "name": "write_to_file",
+                            "raw_target": "src/app.py",  # Re-edit = 1 follow-up fix
+                            "is_edit": True,
+                            "is_src_file": True,
+                            "comment_lines": 3,
+                            "code_lines": 10,
+                        },
+                        {
+                            "name": "Bash",
+                            "command": "pytest",
+                            "is_test_run": True,
+                        },
+                    ],
+                },
+                {
+                    "input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "output_tokens": 100,
+                    "model": "claude-sonnet-4-6",
+                    "calls": [],
+                },
+            ],
+        }
+    ]
+
+    qm = quality_metrics(sess_complex)
+
+    # 1. Turns per completion
+    assert qm["turns_per_completion_avg"] == 2.0
+    assert qm["clean_completed_sessions"] == 1
+
+    # 2. Time taken per completion
+    assert qm["duration_seconds_per_completion_avg"] == 120.0
+    assert qm["duration_minutes_per_completion_avg"] == 2.0
+
+    # 3. Follow-up fixes on same code
+    assert qm["followup_code_fixes_count"] == 1
+    assert qm["followup_code_fix_rate_pct"] == 50.0  # 1 fix out of (1 unique file + 1 fix)
+
+    # 4. Verbosity & Comment Ratio
+    # Total output tokens = 300 across 2 turns = 150.0 tok/turn
+    assert qm["verbosity_tokens_per_turn"] == 150.0
+    assert qm["verbosity_level"] == "Moderate"
+    # Total comments = 8, Total code = 30 -> ratio = 8/30 = 0.27
+    assert qm["comment_to_code_ratio"] == 0.27
+    assert qm["comment_density_pct"] == round(8 / 38 * 100.0, 1)
+
+    # Check Prometheus formatting
+    payload = _build_payload(sess_complex, capture=None, range_key="all", agent="all", store_path=None)
+    prom_text = format_prometheus_metrics(payload)
+    assert "ace_quality_turns_per_completion_avg 2.0" in prom_text
+    assert "ace_quality_duration_seconds_per_completion_avg 120.0" in prom_text
+    assert "ace_quality_followup_code_fixes_total 1" in prom_text
+    assert "ace_quality_comment_to_code_ratio 0.27" in prom_text
+    assert "ace_quality_verbosity_tokens_per_turn 150.0" in prom_text
+
+    # Check UI rendering
+    html = render(payload)
+    assert "TURNS / TASK" in html or "turns_per_task" in html
+    assert "TIME / TASK" in html or "time_per_task" in html
+    assert "FOLLOW-UP FIXES" in html or "followup_fixes" in html
+    assert "CODE COMMENT DENSITY" in html or "comment_ratio" in html
+    assert "VERBOSITY LEVEL" in html or "verbosity" in html
+
+

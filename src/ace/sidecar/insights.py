@@ -292,6 +292,24 @@ def _classify_session_task_category(session: Dict[str, Any]) -> str:
     return TASK_CAT_BACKEND
 
 
+_COMMENT_LINE_RE = re.compile(r"^\s*(#|//|/\*|\*|\*/|\"\"\"|\'\'\'|--|<!--)")
+
+
+def _count_comment_and_code_lines(text: str) -> Tuple[int, int]:
+    """Counts comment lines and executable code lines in a code snippet."""
+    if not text:
+        return 0, 0
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+    c_cnt = 0
+    k_cnt = 0
+    for line in lines:
+        if _COMMENT_LINE_RE.match(line):
+            c_cnt += 1
+        else:
+            k_cnt += 1
+    return c_cnt, k_cnt
+
+
 def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     target_raw = None
     for k in (
@@ -351,6 +369,23 @@ def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         and not is_test_file
     )
 
+    edit_content = ""
+    for k in (
+        "CodeContent",
+        "ReplacementContent",
+        "new_string",
+        "content",
+        "text",
+        "replacementContent",
+        "new_content",
+    ):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            edit_content = v
+            break
+
+    c_lines, k_lines = _count_comment_and_code_lines(edit_content) if is_edit else (0, 0)
+
     return {
         "raw_target": target_raw,
         "is_test_run": is_test_run,
@@ -358,6 +393,8 @@ def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         "is_view": is_view,
         "is_test_file": is_test_file,
         "is_src_file": is_src_file,
+        "comment_lines": c_lines,
+        "code_lines": k_lines,
     }
 
 
@@ -2111,6 +2148,17 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             "sessions_with_edits": 0,
             "sessions_with_tests": 0,
             "clean_completed_sessions": 0,
+            "turns_per_completion_avg": 1.0,
+            "duration_seconds_per_completion_avg": 0.0,
+            "duration_minutes_per_completion_avg": 0.0,
+            "followup_code_fixes_count": 0,
+            "followup_code_fix_rate_pct": 0.0,
+            "verbosity_tokens_per_turn": 0.0,
+            "verbosity_level": "Concise",
+            "comment_to_code_ratio": 0.0,
+            "comment_density_pct": 0.0,
+            "total_comment_lines": 0,
+            "total_code_lines": 0,
         }
 
     sessions_with_edits = 0
@@ -2126,9 +2174,20 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     all_thrashed_files = set()
     recovery_turns_list = []
+    completed_turns_list: List[int] = []
+    completed_durations_list: List[float] = []
+
+    total_unique_files_edited = 0
+    total_followup_code_fixes = 0
+
+    total_output_tokens = 0
+    total_turns_count = 0
+    total_comment_lines = 0
+    total_code_lines = 0
 
     for s in sess:
         turns = s.get("turns") or []
+        events = s.get("events") or []
         session_has_edit = False
         session_has_test = False
         session_file_edits: Dict[str, int] = {}
@@ -2136,7 +2195,10 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         pending_error_turn: Optional[int] = None
         last_turn_had_error = False
 
+        total_turns_count += len(turns)
+
         for turn_idx, t in enumerate(turns):
+            total_output_tokens += int(t.get("output_tokens") or 0)
             turn_has_error = False
             for c in t.get("calls") or []:
                 total_tool_calls += 1
@@ -2165,6 +2227,10 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
                         test_edits_count += 1
                     elif c.get("is_src_file"):
                         src_edits_count += 1
+
+                    total_comment_lines += int(c.get("comment_lines") or 0)
+                    total_code_lines += int(c.get("code_lines") or 0)
+
                     # A file edit invalidates previous view cache
                     last_view_sig = None
 
@@ -2189,18 +2255,30 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         if turns and any(c.get("is_error") for c in turns[-1].get("calls") or []):
             last_turn_had_error = True
 
+        is_clean_completion = False
         if session_has_edit:
             sessions_with_edits += 1
             if session_has_test and not last_turn_had_error:
                 clean_completed_sessions += 1
+                is_clean_completion = True
         else:
             if not last_turn_had_error:
                 clean_completed_sessions += 1
+                is_clean_completion = True
+
+        if is_clean_completion:
+            completed_turns_list.append(len(turns))
+            if events and len(events) >= 2:
+                dur = max(0.0, float(events[-1][0]) - float(events[0][0]))
+                completed_durations_list.append(dur)
 
         if session_has_test:
             sessions_with_tests += 1
 
         for fpath, count in session_file_edits.items():
+            total_unique_files_edited += 1
+            if count > 1:
+                total_followup_code_fixes += (count - 1)
             if count >= 3:
                 all_thrashed_files.add(fpath)
 
@@ -2248,6 +2326,52 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         (sum(recovery_turns_list) / len(recovery_turns_list))
         if recovery_turns_list
         else 1.0
+    )
+
+    # 1. Turns per completion
+    turns_per_completion_avg = (
+        round(sum(completed_turns_list) / len(completed_turns_list), 1)
+        if completed_turns_list
+        else round(total_turns_count / max(1, total_sessions), 1)
+    )
+
+    # 2. Duration per completion
+    duration_seconds_per_completion_avg = (
+        round(sum(completed_durations_list) / len(completed_durations_list), 1)
+        if completed_durations_list
+        else 0.0
+    )
+    duration_minutes_per_completion_avg = round(duration_seconds_per_completion_avg / 60.0, 1)
+
+    # 3. Follow-up code fixes on same code
+    followup_code_fix_rate_pct = (
+        round(
+            (total_followup_code_fixes / max(1, total_unique_files_edited + total_followup_code_fixes))
+            * 100.0,
+            1,
+        )
+        if total_unique_files_edited > 0
+        else 0.0
+    )
+
+    # 4. Verbosity level & Comment-to-code ratio
+    verbosity_tokens_per_turn = round(total_output_tokens / max(1, total_turns_count), 1)
+    if verbosity_tokens_per_turn < 150:
+        verbosity_level = "Concise"
+    elif verbosity_tokens_per_turn <= 350:
+        verbosity_level = "Moderate"
+    else:
+        verbosity_level = "Verbose"
+
+    comment_to_code_ratio = (
+        round(total_comment_lines / max(1, total_code_lines), 2)
+        if total_code_lines > 0
+        else (1.0 if total_comment_lines > 0 else 0.0)
+    )
+    comment_density_pct = (
+        round((total_comment_lines / max(1, total_comment_lines + total_code_lines)) * 100.0, 1)
+        if (total_comment_lines + total_code_lines) > 0
+        else 0.0
     )
 
     # Balanced 0-100 score:
@@ -2298,6 +2422,17 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "sessions_with_edits": sessions_with_edits,
         "sessions_with_tests": sessions_with_tests,
         "clean_completed_sessions": clean_completed_sessions,
+        "turns_per_completion_avg": turns_per_completion_avg,
+        "duration_seconds_per_completion_avg": duration_seconds_per_completion_avg,
+        "duration_minutes_per_completion_avg": duration_minutes_per_completion_avg,
+        "followup_code_fixes_count": total_followup_code_fixes,
+        "followup_code_fix_rate_pct": followup_code_fix_rate_pct,
+        "verbosity_tokens_per_turn": verbosity_tokens_per_turn,
+        "verbosity_level": verbosity_level,
+        "comment_to_code_ratio": comment_to_code_ratio,
+        "comment_density_pct": comment_density_pct,
+        "total_comment_lines": total_comment_lines,
+        "total_code_lines": total_code_lines,
     }
 
 
@@ -3368,6 +3503,26 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     lines.append("# HELP ace_quality_test_to_code_ratio Ratio of test file edits to source file edits.")
     lines.append("# TYPE ace_quality_test_to_code_ratio gauge")
     lines.append(f'ace_quality_test_to_code_ratio {qm.get("test_to_code_ratio", 1.0)}')
+
+    lines.append("# HELP ace_quality_turns_per_completion_avg Average turns required to complete a verified task.")
+    lines.append("# TYPE ace_quality_turns_per_completion_avg gauge")
+    lines.append(f'ace_quality_turns_per_completion_avg {qm.get("turns_per_completion_avg", 1.0)}')
+
+    lines.append("# HELP ace_quality_duration_seconds_per_completion_avg Average wall-clock seconds to complete a task.")
+    lines.append("# TYPE ace_quality_duration_seconds_per_completion_avg gauge")
+    lines.append(f'ace_quality_duration_seconds_per_completion_avg {qm.get("duration_seconds_per_completion_avg", 0.0)}')
+
+    lines.append("# HELP ace_quality_followup_code_fixes_total Number of follow-up code edits on previously modified files.")
+    lines.append("# TYPE ace_quality_followup_code_fixes_total counter")
+    lines.append(f'ace_quality_followup_code_fixes_total {qm.get("followup_code_fixes_count", 0)}')
+
+    lines.append("# HELP ace_quality_comment_to_code_ratio Ratio of comment lines to executable code lines in modifications.")
+    lines.append("# TYPE ace_quality_comment_to_code_ratio gauge")
+    lines.append(f'ace_quality_comment_to_code_ratio {qm.get("comment_to_code_ratio", 0.0)}')
+
+    lines.append("# HELP ace_quality_verbosity_tokens_per_turn Average output tokens generated per agent turn.")
+    lines.append("# TYPE ace_quality_verbosity_tokens_per_turn gauge")
+    lines.append(f'ace_quality_verbosity_tokens_per_turn {qm.get("verbosity_tokens_per_turn", 0.0)}')
 
     # Task Category Performance Metrics
     lines.append("# HELP ace_quality_category_score Quality score partitioned by task category.")

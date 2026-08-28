@@ -733,10 +733,18 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
     thrash_cnt = qm.get("thrashed_files_count", 0)
     recovery_turns = qm.get("avg_error_recovery_turns", 1.0)
     redundant_reads = qm.get("redundant_reads_count", 0)
-    test_code_ratio = qm.get("test_to_code_ratio", 1.0)
     sessions_edits = qm.get("sessions_with_edits", 0)
     sessions_tests = qm.get("sessions_with_tests", 0)
     clean_completed = qm.get("clean_completed_sessions", 0)
+
+    turns_task = qm.get("turns_per_completion_avg", 1.0)
+    time_task_min = qm.get("duration_minutes_per_completion_avg", 0.0)
+    followup_fixes = qm.get("followup_code_fixes_count", 0)
+    followup_rate = qm.get("followup_code_fix_rate_pct", 0.0)
+    comment_ratio = qm.get("comment_to_code_ratio", 0.0)
+    comment_density = qm.get("comment_density_pct", 0.0)
+    verbosity_tok = qm.get("verbosity_tokens_per_turn", 0.0)
+    verbosity_lvl = qm.get("verbosity_level", "Concise")
 
     score_color = (
         "var(--mint)"
@@ -765,12 +773,18 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             title="Percentage of sessions that resolved cleanly without trailing tool errors or unverified changes.",
         ),
         _st(
-            "verification_rate",
-            f"{v_rate}%",
-            f"{sessions_tests} of {sessions_edits} edit sessions",
-            delta="TEST HYGIENE",
-            dcls=v_cls,
-            title="Percentage of sessions containing file modifications that executed an automated test runner or linter (pytest, npm test, ruff, etc.).",
+            "turns_per_task",
+            f"{turns_task} turns",
+            "avg turns / completion",
+            delta="CONVERSATION EFFICIENCY",
+            title="Average number of conversation turns required to achieve a verified clean task completion.",
+        ),
+        _st(
+            "time_per_task",
+            f"{time_task_min} min",
+            "avg elapsed / completion",
+            delta="DELIVERY SPEED",
+            title="Average wall-clock duration in minutes from session start to verified resolution.",
         ),
         _st(
             "first_pass_success",
@@ -781,19 +795,41 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             title="Share of tool executions that succeeded on their first attempt without returning execution errors or non-zero exit codes.",
         ),
         _st(
+            "verification_rate",
+            f"{v_rate}%",
+            f"{sessions_tests} of {sessions_edits} edit sessions",
+            delta="TEST HYGIENE",
+            dcls=v_cls,
+            title="Percentage of sessions containing file modifications that executed an automated test runner or linter (pytest, npm test, ruff, etc.).",
+        ),
+        _st(
+            "followup_fixes",
+            f"{followup_fixes}",
+            f"{followup_rate}% rework rate",
+            delta="FOLLOW-UP FIXES",
+            title="Follow-up code modifications and bugfixes applied to the same files in subsequent turns.",
+        ),
+        _st(
+            "comment_ratio",
+            f"{comment_ratio}x",
+            f"{comment_density}% comment density",
+            delta="CODE COMMENT DENSITY",
+            title="Ratio of inline comments to executable code lines in modifications.",
+        ),
+        _st(
+            "verbosity",
+            f"{verbosity_tok} tok",
+            f"{verbosity_lvl} explanation",
+            delta="VERBOSITY LEVEL",
+            title="Average generated output tokens per conversational turn.",
+        ),
+        _st(
             "edit_thrash_files",
             f"{thrash_cnt}",
             f"{qm.get('total_edits', 0)} total file edits",
             delta="REWORK CHURN",
             dcls=thrash_cls,
             title="Files edited 3 or more times within the same session, indicating thrashing or lack of convergence.",
-        ),
-        _st(
-            "healing_latency",
-            f"{recovery_turns} turns",
-            f"{redundant_reads} redundant reads",
-            delta="ERROR HEALING",
-            title="Average number of conversation turns required for the agent to resolve a failed tool execution and resume forward progress.",
         ),
     ]
 
@@ -818,10 +854,13 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         a_score = a_info.get("quality_score", 100)
         a_grade = a_info.get("grade", "A")
         a_comp = a_info.get("task_completion_rate_pct", 100.0)
+        a_turns = a_info.get("turns_per_completion_avg", 1.0)
+        a_time = a_info.get("duration_minutes_per_completion_avg", 0.0)
         a_v_rate = a_info.get("verification_rate_pct", 100.0)
         a_fsr = a_info.get("first_pass_success_rate_pct", 100.0)
-        a_thrash = a_info.get("thrashed_files_count", 0)
-        a_rec = a_info.get("avg_error_recovery_turns", 1.0)
+        a_fixes = a_info.get("followup_code_fixes_count", 0)
+        a_comm = a_info.get("comment_to_code_ratio", 0.0)
+        a_verb = a_info.get("verbosity_tokens_per_turn", 0.0)
         a_sess = a_info.get("sessions", 0)
         badge_style = (
             "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
@@ -846,10 +885,13 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<td style='padding:10px 14px;'><span class='pill' style='{badge_style};font-size:13px;padding:3px 10px;font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
             f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{a_score} ({a_grade})</span></td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_comp}%</b></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_turns}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_time}m</td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_v_rate}%</b></td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_fsr}%</b></td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(a_thrash) + '</b>' if a_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_rec} turns</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_fixes}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_comm}x</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_verb} tok</td>"
             f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{a_sess}</td>"
             f"</tr>"
         )
@@ -861,10 +903,13 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         m_score = m_info.get("quality_score", 100)
         m_grade = m_info.get("grade", "A")
         m_comp = m_info.get("task_completion_rate_pct", 100.0)
+        m_turns = m_info.get("turns_per_completion_avg", 1.0)
+        m_time = m_info.get("duration_minutes_per_completion_avg", 0.0)
         m_v_rate = m_info.get("verification_rate_pct", 100.0)
         m_fsr = m_info.get("first_pass_success_rate_pct", 100.0)
-        m_thrash = m_info.get("thrashed_files_count", 0)
-        m_rec = m_info.get("avg_error_recovery_turns", 1.0)
+        m_fixes = m_info.get("followup_code_fixes_count", 0)
+        m_comm = m_info.get("comment_to_code_ratio", 0.0)
+        m_verb = m_info.get("verbosity_tokens_per_turn", 0.0)
         m_sess = m_info.get("sessions", 0)
         score_badge = (
             "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
@@ -880,10 +925,13 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<td class='m' style='padding:10px 14px;'><code style='color:var(--ink);font-size:14px;font-weight:500;'>{escape(m_name)}</code></td>"
             f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{m_score} ({m_grade})</span></td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_comp}%</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_turns}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_time}m</td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_v_rate}%</td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_fsr}%</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(m_thrash) + '</b>' if m_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-2);'>{m_rec} turns</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_fixes}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_comm}x</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_verb} tok</td>"
             f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-3);'>{m_sess}</td>"
             f"</tr>"
         )
@@ -900,10 +948,13 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>ENGINE / MODEL</th>"
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TURNS/TASK</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TIME/TASK</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>THRASH FILES</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>HEALING TURNS</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FOLLOW-UP FIXES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMMENT RATIO</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERBOSITY</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
             f"</tr></thead>"
             f"<tbody>{''.join(breakdown_rows)}</tbody>"
@@ -924,9 +975,12 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         c_score = c_info.get("quality_score", 100)
         c_grade = c_info.get("grade", "A")
         c_comp = c_info.get("task_completion_rate_pct", 100.0)
+        c_turns = c_info.get("turns_per_completion_avg", 1.0)
+        c_time = c_info.get("duration_minutes_per_completion_avg", 0.0)
         c_verif = c_info.get("verification_rate_pct", 100.0)
         c_fsr = c_info.get("first_pass_success_rate_pct", 100.0)
-        c_thrash = c_info.get("thrashed_files_count", 0)
+        c_fixes = c_info.get("followup_code_fixes_count", 0)
+        c_comm = c_info.get("comment_to_code_ratio", 0.0)
         c_share = c_info.get("share_pct", 0.0)
         best_agent = c_info.get("best_agent", "—")
         best_model = c_info.get("best_model", "—")
@@ -951,9 +1005,12 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"</td>"
             f"<td style='padding:12px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{c_score} ({c_grade})</span></td>"
             f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_comp}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_turns}</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_time}m</td>"
             f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_verif}%</b></td>"
             f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_fsr}%</b></td>"
-            f"<td class='num' style='padding:12px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(c_thrash) + '</b>' if c_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_fixes}</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_comm}x</td>"
             f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{c_sessions}</td>"
             f"<td style='padding:12px 14px;font-size:13px;'>"
             f"<div><b style='color:var(--ink);'>{escape(best_agent)}</b></div>"
@@ -973,9 +1030,12 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TASK CATEGORY</th>"
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TURNS/TASK</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TIME/TASK</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>THRASH FILES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FOLLOW-UP FIXES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMMENT RATIO</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>BEST FIT ENGINE / MODEL</th>"
             f"</tr></thead>"
