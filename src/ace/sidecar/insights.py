@@ -148,6 +148,256 @@ def _sig(name: str, tool_input: Dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+_TEST_CMD_RE = re.compile(
+    r"\b(pytest|npm\s+(?:run\s+)?test|vitest|jest|cargo\s+test|go\s+test|dotnet\s+test|ctest|ruff|eslint|mypy|flake8|pylint|black\s+--check|tsc\s+--noEmit|bundle\s+exec\s+rspec)\b",
+    re.IGNORECASE,
+)
+
+_ERR_MSG_RE = re.compile(
+    r"(encountered error in tool execution|the command exited with code [1-9]|exit code [1-9]|operation not permitted|command failed|fatal:|traceback \(most recent call last\)|syntaxerror|typeerror|keyerror|assertionerror|modulenotfounderror|permission denied|no such file or directory)",
+    re.IGNORECASE,
+)
+
+_TEST_FILE_RE = re.compile(
+    r"(^|[/\\])(tests?|spec|__tests__)[/\\]|(\.|_)(test|spec)\.[a-zA-Z0-9]+$",
+    re.IGNORECASE,
+)
+
+_SOURCE_FILE_EXTS = (
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".sh",
+    ".html",
+    ".css",
+    ".vue",
+)
+
+TASK_CAT_UI = "ui"
+TASK_CAT_BACKEND = "backend"
+TASK_CAT_TESTING = "testing"
+TASK_CAT_DOCS = "docs"
+TASK_CAT_RESEARCH = "research"
+
+TASK_CATEGORIES: Dict[str, Dict[str, str]] = {
+    TASK_CAT_UI: {
+        "label": "UI & Frontend",
+        "icon": "🎨",
+        "desc": "User interfaces, web layouts, components, templates, and styling.",
+    },
+    TASK_CAT_BACKEND: {
+        "label": "Backend & Systems",
+        "icon": "⚙️",
+        "desc": "Server logic, database models, APIs, pipelines, and algorithms.",
+    },
+    TASK_CAT_TESTING: {
+        "label": "Testing & QA",
+        "icon": "🧪",
+        "desc": "Unit/integration tests, test harnesses, assertions, and linter auto-fixes.",
+    },
+    TASK_CAT_DOCS: {
+        "label": "Docs & Specs",
+        "icon": "📝",
+        "desc": "Architecture documentation, implementation plans, and walkthroughs.",
+    },
+    TASK_CAT_RESEARCH: {
+        "label": "Codebase Research",
+        "icon": "🔍",
+        "desc": "Codebase navigation, symbol search, architecture analysis, and comprehension.",
+    },
+}
+
+_UI_EXTS = (
+    ".tsx",
+    ".jsx",
+    ".vue",
+    ".svelte",
+    ".css",
+    ".scss",
+    ".sass",
+    ".html",
+    ".svg",
+)
+_DOC_EXTS = (".md", ".mdx", ".rst", ".txt", ".adoc")
+
+
+def _classify_session_task_category(session: Dict[str, Any]) -> str:
+    """Classifies a coding session into a primary task domain based on tool calls and target files."""
+    turns = session.get("turns") or []
+    edits: List[str] = []
+    has_test_runs = False
+
+    for t in turns:
+        for c in t.get("calls") or []:
+            if c.get("is_edit"):
+                tgt = str(c.get("raw_target") or c.get("target") or "").lower()
+                edits.append(tgt)
+            if c.get("is_test_run"):
+                has_test_runs = True
+
+    if not edits:
+        return TASK_CAT_RESEARCH
+
+    ui_count = sum(
+        1
+        for e in edits
+        if any(e.endswith(ext) for ext in _UI_EXTS)
+        or any(
+            k in e
+            for k in (
+                "/ui/",
+                "/frontend/",
+                "/components/",
+                "/views/",
+                "/styles/",
+                "/web/",
+                "/templates/",
+                "dashboard_render",
+            )
+        )
+    )
+    test_count = sum(1 for e in edits if _TEST_FILE_RE.search(e))
+    doc_count = sum(
+        1
+        for e in edits
+        if any(e.endswith(ext) for ext in _DOC_EXTS)
+        or any(k in e for k in ("doc", "readme", "walkthrough", "plan"))
+    )
+    backend_count = len(edits) - ui_count - test_count - doc_count
+
+    counts = {
+        TASK_CAT_UI: ui_count,
+        TASK_CAT_TESTING: test_count,
+        TASK_CAT_DOCS: doc_count,
+        TASK_CAT_BACKEND: max(0, backend_count),
+    }
+    top_cat = max(counts.items(), key=lambda kv: kv[1])
+    if top_cat[1] > 0:
+        return top_cat[0]
+    return TASK_CAT_BACKEND
+
+
+_COMMENT_LINE_RE = re.compile(r"^\s*(#|//|/\*|\*|\*/|\"\"\"|\'\'\'|--|<!--)")
+
+
+def _count_comment_and_code_lines(text: str) -> Tuple[int, int]:
+    """Counts comment lines and executable code lines in a code snippet."""
+    if not text:
+        return 0, 0
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+    c_cnt = 0
+    k_cnt = 0
+    for line in lines:
+        if _COMMENT_LINE_RE.match(line):
+            c_cnt += 1
+        else:
+            k_cnt += 1
+    return c_cnt, k_cnt
+
+
+def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    target_raw = None
+    for k in (
+        "file_path",
+        "path",
+        "TargetFile",
+        "target_file",
+        "filename",
+        "file",
+        "notebook_path",
+        "AbsolutePath",
+    ):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            target_raw = v
+            break
+
+    cmd = None
+    for k in ("command", "CommandLine", "cmd", "input"):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            cmd = v
+            break
+
+    name_lower = name.lower()
+    is_test_run = False
+    if cmd and _TEST_CMD_RE.search(cmd):
+        is_test_run = True
+
+    is_edit = name_lower in (
+        "edit",
+        "str_replace_editor",
+        "write_to_file",
+        "replace_file_content",
+        "create_file",
+        "modify_file_content",
+        "save_file",
+        "patch",
+    ) or (
+        name_lower.startswith("edit")
+        or name_lower.startswith("write")
+        or name_lower.startswith("replace")
+    )
+    is_view = name_lower in (
+        "view",
+        "view_file",
+        "read_file",
+        "cat",
+        "open_file",
+        "get_file_contents",
+    ) or (name_lower.startswith("view") or name_lower.startswith("read"))
+
+    is_test_file = bool(target_raw and _TEST_FILE_RE.search(target_raw))
+    is_src_file = bool(
+        target_raw
+        and any(target_raw.lower().endswith(ext) for ext in _SOURCE_FILE_EXTS)
+        and not is_test_file
+    )
+
+    edit_content = ""
+    for k in (
+        "CodeContent",
+        "ReplacementContent",
+        "new_string",
+        "content",
+        "text",
+        "replacementContent",
+        "new_content",
+    ):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            edit_content = v
+            break
+
+    c_lines, k_lines = _count_comment_and_code_lines(edit_content) if is_edit else (0, 0)
+
+    return {
+        "raw_target": target_raw,
+        "is_test_run": is_test_run,
+        "is_edit": is_edit,
+        "is_view": is_view,
+        "is_test_file": is_test_file,
+        "is_src_file": is_src_file,
+        "comment_lines": c_lines,
+        "code_lines": k_lines,
+    }
+
+
 def _measure(body: Any) -> int:
     """A tool_result body -> its size in byte-equivalents, with images priced as images.
 
@@ -256,6 +506,7 @@ def _scan(root: str) -> List[Dict[str, Any]]:
         # tool_use_id -> short hash of the result content, so the de-dup lever can prove
         # "already in context" instead of inferring it from a matching path.
         result_digests: Dict[str, str] = {}
+        result_errors: Dict[str, bool] = {}
         seen_ids: Dict[str, int] = {}  # message id -> index of its turn in `turns`
         cwds: List[str] = []
         # The timeline `time_budget` and `parked` read: (start, kind, tool names, end). Only
@@ -304,10 +555,16 @@ def _scan(root: str) -> List[Dict[str, Any]]:
                                 ):
                                     saw_result = True
                                     body = b.get("content")
-                                    result_bytes[b.get("tool_use_id")] = _measure(body)
-                                    dg = _digest(body)
-                                    if dg:
-                                        result_digests[b.get("tool_use_id")] = dg
+                                    tid = b.get("tool_use_id")
+                                    if tid:
+                                        result_bytes[tid] = _measure(body)
+                                        dg = _digest(body)
+                                        if dg:
+                                            result_digests[tid] = dg
+                                        if b.get("is_error") or str(
+                                            b.get("status", "")
+                                        ).lower() in ("error", "failed"):
+                                            result_errors[tid] = True
                         # A tool finishing and a human typing are both "user" records and
                         # they mean opposite things about who the session is waiting on.
                         at = _epoch(rec.get("timestamp"))
@@ -330,12 +587,19 @@ def _scan(root: str) -> List[Dict[str, Any]]:
                         if bt == "tool_use":
                             ti = b.get("input") or {}
                             nm = b.get("name") or "?"
+                            cl = _classify_call(nm, ti)
                             calls.append(
                                 {
                                     "id": b.get("id"),
                                     "name": nm,
                                     "target": _target(ti),
                                     "sig": _sig(nm, ti),
+                                    "raw_target": cl["raw_target"],
+                                    "is_test_run": cl["is_test_run"],
+                                    "is_edit": cl["is_edit"],
+                                    "is_view": cl["is_view"],
+                                    "is_test_file": cl["is_test_file"],
+                                    "is_src_file": cl["is_src_file"],
                                 }
                             )
                     turn = {
@@ -382,12 +646,15 @@ def _scan(root: str) -> List[Dict[str, Any]]:
         for t in turns:
             for c in t["calls"]:
                 cid = c.pop("id", None)
-                n = result_bytes.get(cid)
-                if n is not None:
-                    c["result_bytes"] = n
-                dg = result_digests.get(cid)
-                if dg:
-                    c["digest"] = dg
+                if cid is not None:
+                    n = result_bytes.get(cid)
+                    if n is not None:
+                        c["result_bytes"] = n
+                    dg = result_digests.get(cid)
+                    if dg:
+                        c["digest"] = dg
+                    if cid in result_errors:
+                        c["is_error"] = True
         # Assistant events are derived here rather than inside the loop above: a turn's
         # ``tool_use`` blocks can be spread across several records sharing one message id (see
         # the docstring), so the complete call list only exists once the join is done. Reading
@@ -464,6 +731,7 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
 
         result_bytes: Dict[str, int] = {}
         result_digests: Dict[str, str] = {}
+        result_errors: Dict[str, bool] = {}
 
         first_snippet: str = ""
         try:
@@ -489,22 +757,7 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                             if text and not text.startswith("<"):
                                 first_snippet = text[:110]
                         events.append((at, "prompt", (), at))
-                        continue
-
-                    if stype in ("TOOL_RESULT", "SYSTEM_RESULT"):
-                        body = (
-                            rec.get("content") or rec.get("output") or rec.get("result")
-                        )
-                        tid = (
-                            rec.get("tool_use_id")
-                            or rec.get("call_id")
-                            or f"call_{len(events)}"
-                        )
-                        result_bytes[tid] = _measure(body)
-                        dg = _digest(body)
-                        if dg:
-                            result_digests[tid] = dg
-                        events.append((at, "tool_result", (), at))
+                        current_turn_calls = None
                         continue
 
                     if (
@@ -524,13 +777,19 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                             if isinstance(tc, dict):
                                 nm = tc.get("name") or "tool"
                                 args = tc.get("args") or tc.get("input") or {}
-                                call_id = tc.get("id") or f"call_{len(turns)}_{idx_c}"
+                                cl = _classify_call(nm, args)
                                 calls.append(
                                     {
-                                        "id": call_id,
                                         "name": nm,
                                         "target": _target(args),
                                         "sig": _sig(nm, args),
+                                        "raw_target": cl["raw_target"],
+                                        "is_test_run": cl["is_test_run"],
+                                        "is_edit": cl["is_edit"],
+                                        "is_view": cl["is_view"],
+                                        "is_test_file": cl["is_test_file"],
+                                        "is_src_file": cl["is_src_file"],
+                                        "is_error": False,
                                     }
                                 )
 
@@ -580,24 +839,40 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                             ),
                         }
                         turns.append(turn)
+                        current_turn_calls = calls if calls else None
                         events.append(
                             (at, "assistant", tuple(c["name"] for c in calls), at)
                         )
+                        continue
+
+                    if current_turn_calls and (
+                        stype in ("GENERIC", "TOOL_RESULT", "SYSTEM_MESSAGE", "SYSTEM_RESULT")
+                        or ssource in ("SYSTEM", "MODEL")
+                    ):
+                        body = rec.get("content") or rec.get("output") or rec.get("result") or ""
+                        st = str(rec.get("status", "")).upper()
+                        is_err = (
+                            st in ("ERROR", "FAILED")
+                            or bool(rec.get("error"))
+                            or bool(rec.get("is_error"))
+                            or bool(_ERR_MSG_RE.search(str(body)))
+                        )
+                        for c in current_turn_calls:
+                            if is_err:
+                                c["is_error"] = True
+                            c["result_bytes"] = _measure(body)
+                            dg = _digest(body)
+                            if dg:
+                                c["digest"] = dg
+                        events.append((at, "tool_result", (), at))
+                        continue
         except Exception:
             continue
 
         if turns:
-            for t in turns:
-                for c in t["calls"]:
-                    cid_tag = c.pop("id", None)
-                    if cid_tag and cid_tag in result_bytes:
-                        c["result_bytes"] = result_bytes[cid_tag]
-                    if cid_tag and cid_tag in result_digests:
-                        c["digest"] = result_digests[cid_tag]
-
             events.sort(key=lambda e: e[0])
             name = f"agy_{cid[:8]}" if cid else f"agy_{len(sessions)+1}"
-            session: Dict[str, Any] = {
+            session = {
                 "session": name,
                 "kind": "main",
                 "agent_type": AGENT_ANTIGRAVITY,
@@ -634,6 +909,7 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
 
         result_bytes: Dict[str, int] = {}
         result_digests: Dict[str, str] = {}
+        result_errors: Dict[str, bool] = {}
         first_snippet: str = ""
 
         try:
@@ -732,12 +1008,19 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         or payload.get("id")
                         or f"call_{len(turns)}_{len(current_calls)}"
                     )
+                    cl = _classify_call(nm, args)
                     current_calls.append(
                         {
                             "id": cid,
                             "name": nm,
                             "target": _target(args),
                             "sig": _sig(nm, args),
+                            "raw_target": cl["raw_target"],
+                            "is_test_run": cl["is_test_run"],
+                            "is_edit": cl["is_edit"],
+                            "is_view": cl["is_view"],
+                            "is_test_file": cl["is_test_file"],
+                            "is_src_file": cl["is_src_file"],
                         }
                     )
                     continue
@@ -750,6 +1033,13 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         dg = _digest(out_body)
                         if dg:
                             result_digests[cid] = dg
+                        if (
+                            payload.get("exit_code") not in (None, 0)
+                            or bool(payload.get("is_error"))
+                            or str(payload.get("status", "")).lower()
+                            in ("error", "failed")
+                        ):
+                            result_errors[cid] = True
                     events.append((at, "tool_result", (), at))
                     continue
 
@@ -842,6 +1132,12 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                     dg = _digest(body)
                     if dg:
                         result_digests[tid] = dg
+                    if (
+                        rec.get("exit_code") not in (None, 0)
+                        or bool(rec.get("is_error"))
+                        or str(rec.get("status", "")).lower() in ("error", "failed")
+                    ):
+                        result_errors[tid] = True
                     events.append((at, "tool_result", (), at))
                     continue
 
@@ -883,12 +1179,19 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                                 except Exception:
                                     args = {"raw": args}
                             call_id = tc.get("id") or f"call_{len(turns)}_{idx_c}"
+                            cl = _classify_call(nm, args)
                             calls.append(
                                 {
                                     "id": call_id,
                                     "name": nm,
                                     "target": _target(args),
                                     "sig": _sig(nm, args),
+                                    "raw_target": cl["raw_target"],
+                                    "is_test_run": cl["is_test_run"],
+                                    "is_edit": cl["is_edit"],
+                                    "is_view": cl["is_view"],
+                                    "is_test_file": cl["is_test_file"],
+                                    "is_src_file": cl["is_src_file"],
                                 }
                             )
 
@@ -965,6 +1268,8 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         c["result_bytes"] = result_bytes[cid_tag]
                     if cid_tag and cid_tag in result_digests:
                         c["digest"] = result_digests[cid_tag]
+                    if cid_tag and cid_tag in result_errors:
+                        c["is_error"] = True
 
             if not first_snippet:
                 try:
@@ -1810,6 +2115,444 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     return agg
 
 
+# ------------------------------------------------- code quality & reliability metrics
+
+
+def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total_sessions = len(sess)
+    if not total_sessions:
+        return {
+            "available": False,
+            "quality_score": 100,
+            "grade": "A",
+            "task_completion_rate": 1.0,
+            "task_completion_rate_pct": 100.0,
+            "verification_rate": 1.0,
+            "verification_rate_pct": 100.0,
+            "first_pass_success_rate": 1.0,
+            "first_pass_success_rate_pct": 100.0,
+            "tool_error_rate": 0.0,
+            "tool_error_rate_pct": 0.0,
+            "total_edits": 0,
+            "total_tests": 0,
+            "total_tool_calls": 0,
+            "thrashed_files_count": 0,
+            "thrashed_files_list": [],
+            "rework_thrash_rate": 0.0,
+            "rework_thrash_rate_pct": 0.0,
+            "edit_stability": 1.0,
+            "edit_stability_pct": 100.0,
+            "redundant_reads_count": 0,
+            "avg_error_recovery_turns": 1.0,
+            "test_to_code_ratio": 1.0,
+            "sessions_with_edits": 0,
+            "sessions_with_tests": 0,
+            "clean_completed_sessions": 0,
+            "turns_per_completion_avg": 1.0,
+            "duration_seconds_per_completion_avg": 0.0,
+            "duration_minutes_per_completion_avg": 0.0,
+            "followup_code_fixes_count": 0,
+            "followup_code_fix_rate_pct": 0.0,
+            "verbosity_tokens_per_turn": 0.0,
+            "verbosity_level": "Concise",
+            "comment_to_code_ratio": 0.0,
+            "comment_density_pct": 0.0,
+            "total_comment_lines": 0,
+            "total_code_lines": 0,
+        }
+
+    sessions_with_edits = 0
+    sessions_with_tests = 0
+    clean_completed_sessions = 0
+    total_edits = 0
+    total_tests = 0
+    total_tool_calls = 0
+    failed_tool_calls = 0
+    redundant_reads_count = 0
+    test_edits_count = 0
+    src_edits_count = 0
+
+    all_thrashed_files = set()
+    recovery_turns_list = []
+    completed_turns_list: List[int] = []
+    completed_durations_list: List[float] = []
+
+    total_unique_files_edited = 0
+    total_followup_code_fixes = 0
+
+    total_output_tokens = 0
+    total_turns_count = 0
+    total_comment_lines = 0
+    total_code_lines = 0
+
+    for s in sess:
+        turns = s.get("turns") or []
+        events = s.get("events") or []
+        session_has_edit = False
+        session_has_test = False
+        session_file_edits: Dict[str, int] = {}
+        last_view_sig: Optional[str] = None
+        pending_error_turn: Optional[int] = None
+        last_turn_had_error = False
+
+        total_turns_count += len(turns)
+
+        for turn_idx, t in enumerate(turns):
+            total_output_tokens += int(t.get("output_tokens") or 0)
+            turn_has_error = False
+            for c in t.get("calls") or []:
+                total_tool_calls += 1
+                is_err = bool(c.get("is_error"))
+                if is_err:
+                    failed_tool_calls += 1
+                    turn_has_error = True
+
+                if c.get("is_test_run"):
+                    session_has_test = True
+                    total_tests += 1
+
+                if c.get("is_edit"):
+                    session_has_edit = True
+                    total_edits += 1
+                    raw_t = c.get("raw_target") or c.get("target") or "unknown"
+                    is_artifact = (
+                        "/.gemini/antigravity/brain/" in raw_t
+                        or "/.system_generated/" in raw_t
+                        or raw_t.endswith("walkthrough.md")
+                        or raw_t.endswith("implementation_plan.md")
+                    )
+                    if not is_artifact:
+                        session_file_edits[raw_t] = session_file_edits.get(raw_t, 0) + 1
+                    if c.get("is_test_file"):
+                        test_edits_count += 1
+                    elif c.get("is_src_file"):
+                        src_edits_count += 1
+
+                    total_comment_lines += int(c.get("comment_lines") or 0)
+                    total_code_lines += int(c.get("code_lines") or 0)
+
+                    # A file edit invalidates previous view cache
+                    last_view_sig = None
+
+                if c.get("is_view"):
+                    view_sig = (
+                        c.get("sig")
+                        or c.get("digest")
+                        or c.get("raw_target")
+                        or c.get("target")
+                    )
+                    if view_sig and view_sig == last_view_sig:
+                        redundant_reads_count += 1
+                    last_view_sig = view_sig
+
+            if turn_has_error:
+                if pending_error_turn is None:
+                    pending_error_turn = turn_idx
+            elif pending_error_turn is not None:
+                recovery_turns_list.append(max(1, turn_idx - pending_error_turn))
+                pending_error_turn = None
+
+        if turns and any(c.get("is_error") for c in turns[-1].get("calls") or []):
+            last_turn_had_error = True
+
+        is_clean_completion = False
+        if session_has_edit:
+            sessions_with_edits += 1
+            if session_has_test and not last_turn_had_error:
+                clean_completed_sessions += 1
+                is_clean_completion = True
+        else:
+            if not last_turn_had_error:
+                clean_completed_sessions += 1
+                is_clean_completion = True
+
+        if is_clean_completion:
+            completed_turns_list.append(len(turns))
+            if events and len(events) >= 2:
+                dur = max(0.0, float(events[-1][0]) - float(events[0][0]))
+                completed_durations_list.append(dur)
+
+        if session_has_test:
+            sessions_with_tests += 1
+
+        for fpath, count in session_file_edits.items():
+            total_unique_files_edited += 1
+            if count > 1:
+                total_followup_code_fixes += (count - 1)
+            if count >= 3:
+                all_thrashed_files.add(fpath)
+
+    thrashed_files_count = len(all_thrashed_files)
+    verification_rate = (
+        (sessions_with_tests / sessions_with_edits)
+        if sessions_with_edits > 0
+        else (1.0 if not total_edits else 0.0)
+    )
+
+    first_pass_success_rate = (
+        ((total_tool_calls - failed_tool_calls) / total_tool_calls)
+        if total_tool_calls > 0
+        else 1.0
+    )
+
+    tool_error_rate = (
+        (failed_tool_calls / total_tool_calls)
+        if total_tool_calls > 0
+        else 0.0
+    )
+
+    task_completion_rate = (
+        (clean_completed_sessions / total_sessions)
+        if total_sessions > 0
+        else 1.0
+    )
+
+    rework_thrash_rate = (
+        (thrashed_files_count / max(1, len(all_thrashed_files) + total_edits))
+        if total_edits > 0
+        else 0.0
+    )
+
+    thrash_ratio = (thrashed_files_count / max(1, sessions_with_edits)) if sessions_with_edits > 0 else 0.0
+    edit_stability = max(0.0, 1.0 - (thrash_ratio * 1.0))
+
+    test_to_code_ratio = (
+        (test_edits_count / src_edits_count)
+        if src_edits_count > 0
+        else (1.0 if test_edits_count > 0 else 0.5)
+    )
+
+    avg_error_recovery_turns = (
+        (sum(recovery_turns_list) / len(recovery_turns_list))
+        if recovery_turns_list
+        else 1.0
+    )
+
+    # 1. Turns per completion
+    turns_per_completion_avg = (
+        round(sum(completed_turns_list) / len(completed_turns_list), 1)
+        if completed_turns_list
+        else round(total_turns_count / max(1, total_sessions), 1)
+    )
+
+    # 2. Duration per completion
+    duration_seconds_per_completion_avg = (
+        round(sum(completed_durations_list) / len(completed_durations_list), 1)
+        if completed_durations_list
+        else 0.0
+    )
+    duration_minutes_per_completion_avg = round(duration_seconds_per_completion_avg / 60.0, 1)
+
+    # 3. Follow-up code fixes on same code
+    followup_code_fix_rate_pct = (
+        round(
+            (total_followup_code_fixes / max(1, total_unique_files_edited + total_followup_code_fixes))
+            * 100.0,
+            1,
+        )
+        if total_unique_files_edited > 0
+        else 0.0
+    )
+
+    # 4. Verbosity level & Comment-to-code ratio
+    verbosity_tokens_per_turn = round(total_output_tokens / max(1, total_turns_count), 1)
+    if verbosity_tokens_per_turn < 150:
+        verbosity_level = "Concise"
+    elif verbosity_tokens_per_turn <= 350:
+        verbosity_level = "Moderate"
+    else:
+        verbosity_level = "Verbose"
+
+    comment_to_code_ratio = (
+        round(total_comment_lines / max(1, total_code_lines), 2)
+        if total_code_lines > 0
+        else (1.0 if total_comment_lines > 0 else 0.0)
+    )
+    comment_density_pct = (
+        round((total_comment_lines / max(1, total_comment_lines + total_code_lines)) * 100.0, 1)
+        if (total_comment_lines + total_code_lines) > 0
+        else 0.0
+    )
+
+    # Balanced 0-100 score:
+    # 35% Verified Task Completion, 30% Verification Diligence, 20% First-Pass Tool Success, 15% Edit Stability (Thrash-Free)
+    raw_score = (
+        0.35 * task_completion_rate
+        + 0.30 * verification_rate
+        + 0.20 * first_pass_success_rate
+        + 0.15 * edit_stability
+    ) * 100.0
+
+    quality_score = max(0, min(100, int(round(raw_score))))
+    if quality_score >= 90:
+        grade = "A"
+    elif quality_score >= 80:
+        grade = "B"
+    elif quality_score >= 70:
+        grade = "C"
+    elif quality_score >= 60:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return {
+        "available": True,
+        "quality_score": quality_score,
+        "grade": grade,
+        "task_completion_rate": round(task_completion_rate, 4),
+        "task_completion_rate_pct": round(task_completion_rate * 100.0, 1),
+        "verification_rate": round(verification_rate, 4),
+        "verification_rate_pct": round(verification_rate * 100.0, 1),
+        "first_pass_success_rate": round(first_pass_success_rate, 4),
+        "first_pass_success_rate_pct": round(first_pass_success_rate * 100.0, 1),
+        "tool_error_rate": round(tool_error_rate, 4),
+        "tool_error_rate_pct": round(tool_error_rate * 100.0, 1),
+        "total_edits": total_edits,
+        "total_tests": total_tests,
+        "total_tool_calls": total_tool_calls,
+        "thrashed_files_count": thrashed_files_count,
+        "thrashed_files_list": sorted(list(all_thrashed_files))[:10],
+        "rework_thrash_rate": round(rework_thrash_rate, 4),
+        "rework_thrash_rate_pct": round(rework_thrash_rate * 100.0, 1),
+        "edit_stability": round(edit_stability, 4),
+        "edit_stability_pct": round(edit_stability * 100.0, 1),
+        "redundant_reads_count": redundant_reads_count,
+        "avg_error_recovery_turns": round(avg_error_recovery_turns, 1),
+        "test_to_code_ratio": round(test_to_code_ratio, 2),
+        "sessions_with_edits": sessions_with_edits,
+        "sessions_with_tests": sessions_with_tests,
+        "clean_completed_sessions": clean_completed_sessions,
+        "turns_per_completion_avg": turns_per_completion_avg,
+        "duration_seconds_per_completion_avg": duration_seconds_per_completion_avg,
+        "duration_minutes_per_completion_avg": duration_minutes_per_completion_avg,
+        "followup_code_fixes_count": total_followup_code_fixes,
+        "followup_code_fix_rate_pct": followup_code_fix_rate_pct,
+        "verbosity_tokens_per_turn": verbosity_tokens_per_turn,
+        "verbosity_level": verbosity_level,
+        "comment_to_code_ratio": comment_to_code_ratio,
+        "comment_density_pct": comment_density_pct,
+        "total_comment_lines": total_comment_lines,
+        "total_code_lines": total_code_lines,
+    }
+
+
+def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculates unified code quality, verification hygiene, and reliability metrics.
+
+    Includes top-line metrics along with breakdowns:
+    - by_agent: Quality scores partitioned per agent engine (Claude Code, Antigravity, Codex).
+    - by_model: Quality scores partitioned per LLM model.
+    - by_category: Quality and capability metrics partitioned per coding task domain (UI, Backend, Testing, Docs, Research).
+    """
+    overall = _calc_quality_block(sess)
+    if not sess:
+        overall["by_agent"] = {}
+        overall["by_model"] = []
+        overall["by_category"] = {}
+        return overall
+
+    # Group by agent
+    by_agent: Dict[str, Any] = {}
+    agent_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for s in sess:
+        ak = s.get("agent_type") or AGENT_CLAUDE
+        agent_groups.setdefault(ak, []).append(s)
+
+    for ak, a_sess in agent_groups.items():
+        block = _calc_quality_block(a_sess)
+        by_agent[ak] = {
+            "agent": ak,
+            "label": AGENTS.get(ak, ak.capitalize()),
+            "sessions": len(a_sess),
+            **block,
+        }
+
+    # Group by model
+    model_sessions: Dict[str, List[Dict[str, Any]]] = {}
+    for s in sess:
+        models_in_s = set(t.get("model") for t in s.get("turns", []) if t.get("model"))
+        for m in models_in_s:
+            projected_turns = [t for t in s.get("turns", []) if t.get("model") == m]
+            if projected_turns:
+                model_sessions.setdefault(m, []).append(
+                    {
+                        "session": s.get("session"),
+                        "agent_type": s.get("agent_type"),
+                        "turns": projected_turns,
+                        "events": s.get("events", []),
+                    }
+                )
+
+    by_model: List[Dict[str, Any]] = []
+    for m_name, m_sess in sorted(model_sessions.items(), key=lambda kv: -len(kv[1])):
+        block = _calc_quality_block(m_sess)
+        by_model.append(
+            {
+                "model": m_name,
+                "sessions": len(m_sess),
+                **block,
+            }
+        )
+
+    # Group by task category
+    by_category: Dict[str, Any] = {}
+    category_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for s in sess:
+        ck = _classify_session_task_category(s)
+        category_groups.setdefault(ck, []).append(s)
+
+    for ck, cat_meta in TASK_CATEGORIES.items():
+        c_sess = category_groups.get(ck) or []
+        block = _calc_quality_block(c_sess)
+
+        best_agent = "—"
+        best_agent_score = -1
+        for ak in (AGENT_CLAUDE, AGENT_ANTIGRAVITY, AGENT_CODEX):
+            sub_ak = [s for s in c_sess if (s.get("agent_type") or AGENT_CLAUDE) == ak]
+            if sub_ak:
+                sc = _calc_quality_block(sub_ak)["quality_score"]
+                if sc > best_agent_score:
+                    best_agent_score = sc
+                    best_agent = AGENTS.get(ak, ak.capitalize())
+
+        best_model = "—"
+        best_model_score = -1
+        cat_models = set(
+            t.get("model")
+            for s in c_sess
+            for t in s.get("turns", [])
+            if t.get("model") and not str(t.get("model")).startswith("<")
+        )
+        for m in cat_models:
+            sub_m = []
+            for s in c_sess:
+                proj = [t for t in s.get("turns", []) if t.get("model") == m]
+                if proj:
+                    sub_m.append({"turns": proj, "events": s.get("events", [])})
+            if sub_m:
+                sc = _calc_quality_block(sub_m)["quality_score"]
+                if sc > best_model_score:
+                    best_model_score = sc
+                    best_model = m
+
+        by_category[ck] = {
+            "category": ck,
+            "label": cat_meta["label"],
+            "icon": cat_meta["icon"],
+            "desc": cat_meta["desc"],
+            "sessions": len(c_sess),
+            "share_pct": round(len(c_sess) / max(1, len(sess)) * 100.0, 1),
+            "best_agent": best_agent,
+            "best_model": best_model,
+            **block,
+        }
+
+    overall["by_agent"] = by_agent
+    overall["by_model"] = by_model
+    overall["by_category"] = by_category
+    return overall
+
+
 # ------------------------------------------------- time budget (docs/analysis_docs §1 and §2)
 
 # Declared order is presentation order for ties; the payload sorts by size.
@@ -2137,6 +2880,37 @@ def recommendations(
                     "MEDIUM — a real quality trade, unmeasured here",
                     "up to 14%",
                     "cost",
+                )
+            )
+
+    # 4. Code Quality & Test Hygiene Recommendations
+    if sess is not None:
+        qm = quality_metrics(sess)
+        if (
+            qm.get("sessions_with_edits", 0) > 0
+            and qm.get("verification_rate", 1.0) < 0.5
+        ):
+            recs.append(
+                _rec(
+                    "Low test verification hygiene in agent sessions",
+                    f"Only {qm.get('verification_rate_pct', 0)}% of sessions with code edits ran automated test suites. "
+                    f"Running test/lint passes before finishing turns reduces runtime bugs and catches regressions early.",
+                    f"{qm.get('sessions_with_tests', 0)} of {qm.get('sessions_with_edits', 0)} editing sessions verified",
+                    "LOW",
+                    f"{round((1.0 - qm.get('verification_rate', 0.0)) * 100, 1)}% unverified",
+                    "of editing sessions",
+                )
+            )
+        if qm.get("thrashed_files_count", 0) >= 3:
+            recs.append(
+                _rec(
+                    f"File edit thrashing detected on {qm.get('thrashed_files_count')} files",
+                    "Agent modified the same files 3+ times in single sessions. Providing more explicit prompt instructions, "
+                    "specifying test fixtures, or decomposing tasks into smaller subagents reduces edit churn.",
+                    f"{qm.get('thrashed_files_count')} thrashed files across scope",
+                    "MED",
+                    f"{qm.get('rework_thrash_rate_pct')}% thrash",
+                    "churn rate",
                 )
             )
 
@@ -2471,6 +3245,7 @@ def _build_payload(
         "agent_breakdown": ab,
         "span": span(range_key, window, agg),
         "historical": agg,
+        "quality": quality_metrics(scoped),
         "time": time_budget(scoped),
         "parked": parked(scoped),
         "fleet": _fleet,
@@ -2685,6 +3460,80 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     lines.append("# HELP ace_installed_skills_total Number of active workflow skills installed.")
     lines.append("# TYPE ace_installed_skills_total gauge")
     lines.append(f'ace_installed_skills_total {len(skills)}')
+
+    # Code Quality & Reliability Metrics
+    qm = d.get("quality") or {}
+    lines.append("# HELP ace_quality_score Composite code quality and verification score (0-100).")
+    lines.append("# TYPE ace_quality_score gauge")
+    lines.append(f'ace_quality_score{{agent="all"}} {qm.get("quality_score", 100)}')
+    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+        lines.append(f'ace_quality_score{{agent="{agent_id}"}} {q_info.get("quality_score", 100)}')
+    for m_info in (qm.get("by_model") or []):
+        m_name = m_info.get("model", "unknown")
+        lines.append(f'ace_quality_score{{model="{m_name}"}} {m_info.get("quality_score", 100)}')
+
+    lines.append("# HELP ace_quality_verification_rate Share of edited sessions that ran automated tests or linters.")
+    lines.append("# TYPE ace_quality_verification_rate gauge")
+    lines.append(f'ace_quality_verification_rate{{agent="all"}} {qm.get("verification_rate", 1.0)}')
+    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+        lines.append(f'ace_quality_verification_rate{{agent="{agent_id}"}} {q_info.get("verification_rate", 1.0)}')
+
+    lines.append("# HELP ace_quality_first_pass_success_rate Share of tool calls that succeeded on first pass.")
+    lines.append("# TYPE ace_quality_first_pass_success_rate gauge")
+    lines.append(f'ace_quality_first_pass_success_rate{{agent="all"}} {qm.get("first_pass_success_rate", 1.0)}')
+    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+        lines.append(f'ace_quality_first_pass_success_rate{{agent="{agent_id}"}} {q_info.get("first_pass_success_rate", 1.0)}')
+
+    lines.append("# HELP ace_quality_tool_error_rate Share of tool executions that returned errors.")
+    lines.append("# TYPE ace_quality_tool_error_rate gauge")
+    lines.append(f'ace_quality_tool_error_rate {qm.get("tool_error_rate", 0.0)}')
+
+    lines.append("# HELP ace_quality_thrashed_files_total Number of files edited 3 or more times in a single session.")
+    lines.append("# TYPE ace_quality_thrashed_files_total counter")
+    lines.append(f'ace_quality_thrashed_files_total {qm.get("thrashed_files_count", 0)}')
+
+    lines.append("# HELP ace_quality_redundant_reads_total Count of consecutive duplicate file reads.")
+    lines.append("# TYPE ace_quality_redundant_reads_total counter")
+    lines.append(f'ace_quality_redundant_reads_total {qm.get("redundant_reads_count", 0)}')
+
+    lines.append("# HELP ace_quality_error_recovery_turns_avg Average turns to recover from an execution error.")
+    lines.append("# TYPE ace_quality_error_recovery_turns_avg gauge")
+    lines.append(f'ace_quality_error_recovery_turns_avg {qm.get("avg_error_recovery_turns", 1.0)}')
+
+    lines.append("# HELP ace_quality_test_to_code_ratio Ratio of test file edits to source file edits.")
+    lines.append("# TYPE ace_quality_test_to_code_ratio gauge")
+    lines.append(f'ace_quality_test_to_code_ratio {qm.get("test_to_code_ratio", 1.0)}')
+
+    lines.append("# HELP ace_quality_turns_per_completion_avg Average turns required to complete a verified task.")
+    lines.append("# TYPE ace_quality_turns_per_completion_avg gauge")
+    lines.append(f'ace_quality_turns_per_completion_avg {qm.get("turns_per_completion_avg", 1.0)}')
+
+    lines.append("# HELP ace_quality_duration_seconds_per_completion_avg Average wall-clock seconds to complete a task.")
+    lines.append("# TYPE ace_quality_duration_seconds_per_completion_avg gauge")
+    lines.append(f'ace_quality_duration_seconds_per_completion_avg {qm.get("duration_seconds_per_completion_avg", 0.0)}')
+
+    lines.append("# HELP ace_quality_followup_code_fixes_total Number of follow-up code edits on previously modified files.")
+    lines.append("# TYPE ace_quality_followup_code_fixes_total counter")
+    lines.append(f'ace_quality_followup_code_fixes_total {qm.get("followup_code_fixes_count", 0)}')
+
+    lines.append("# HELP ace_quality_comment_to_code_ratio Ratio of comment lines to executable code lines in modifications.")
+    lines.append("# TYPE ace_quality_comment_to_code_ratio gauge")
+    lines.append(f'ace_quality_comment_to_code_ratio {qm.get("comment_to_code_ratio", 0.0)}')
+
+    lines.append("# HELP ace_quality_verbosity_tokens_per_turn Average output tokens generated per agent turn.")
+    lines.append("# TYPE ace_quality_verbosity_tokens_per_turn gauge")
+    lines.append(f'ace_quality_verbosity_tokens_per_turn {qm.get("verbosity_tokens_per_turn", 0.0)}')
+
+    # Task Category Performance Metrics
+    lines.append("# HELP ace_quality_category_score Quality score partitioned by task category.")
+    lines.append("# TYPE ace_quality_category_score gauge")
+    for cat_id, cat_info in (qm.get("by_category") or {}).items():
+        lines.append(f'ace_quality_category_score{{category="{cat_id}"}} {cat_info.get("quality_score", 100)}')
+
+    lines.append("# HELP ace_quality_category_completion_rate Task completion rate partitioned by task category.")
+    lines.append("# TYPE ace_quality_category_completion_rate gauge")
+    for cat_id, cat_info in (qm.get("by_category") or {}).items():
+        lines.append(f'ace_quality_category_completion_rate{{category="{cat_id}"}} {cat_info.get("task_completion_rate", 1.0)}')
 
     return "\n".join(lines) + "\n"
 
