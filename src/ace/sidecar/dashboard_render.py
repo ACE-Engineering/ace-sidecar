@@ -757,6 +757,355 @@ def _activity_svg(daily: List[Dict[str, Any]], commits: bool) -> str:
     )
 
 
+def _quality(qm: Optional[Dict[str, Any]]) -> str:
+    """§ 02 — Code quality, verification hygiene, and agent execution reliability."""
+    if not qm or not qm.get("available"):
+        return (
+            "<div class='pan'><div class='ph'><span>~/ace/code_quality</span>"
+            "<span class='live calc'><i></i>NO SESSIONS</span></div><div class='pb'>"
+            "<div class='exp'>No session data available in this scope to compute code quality metrics. "
+            "Metrics will populate as coding agent sessions run and edit workspace files.</div></div></div>"
+        )
+
+    score = qm.get("quality_score", 100)
+    grade = qm.get("grade", "A")
+    c_rate = qm.get("task_completion_rate_pct", 100.0)
+    v_rate = qm.get("verification_rate_pct", 100.0)
+    fsr = qm.get("first_pass_success_rate_pct", 100.0)
+    err_rate = qm.get("tool_error_rate_pct", 0.0)
+    thrash_cnt = qm.get("thrashed_files_count", 0)
+    recovery_turns = qm.get("avg_error_recovery_turns", 1.0)
+    redundant_reads = qm.get("redundant_reads_count", 0)
+    sessions_edits = qm.get("sessions_with_edits", 0)
+    sessions_tests = qm.get("sessions_with_tests", 0)
+    clean_completed = qm.get("clean_completed_sessions", 0)
+
+    turns_task = qm.get("turns_per_completion_avg", 1.0)
+    time_task_min = qm.get("duration_minutes_per_completion_avg", 0.0)
+    followup_fixes = qm.get("followup_code_fixes_count", 0)
+    followup_rate = qm.get("followup_code_fix_rate_pct", 0.0)
+    comment_ratio = qm.get("comment_to_code_ratio", 0.0)
+    comment_density = qm.get("comment_density_pct", 0.0)
+    verbosity_tok = qm.get("verbosity_tokens_per_turn", 0.0)
+    verbosity_lvl = qm.get("verbosity_level", "Concise")
+
+    score_color = (
+        "var(--mint)"
+        if score >= 80
+        else ("var(--gold)" if score >= 60 else "var(--crit)")
+    )
+    c_cls = "" if c_rate >= 80 else ("warn" if c_rate >= 60 else "crit")
+    v_cls = "" if v_rate >= 75 else ("warn" if v_rate >= 50 else "crit")
+    fsr_cls = "" if fsr >= 85 else ("warn" if fsr >= 70 else "crit")
+    thrash_cls = "" if thrash_cnt == 0 else ("warn" if thrash_cnt <= 5 else "crit")
+
+    tiles = [
+        _st(
+            "quality_score",
+            f"<span style='color:{score_color}'>{score}</span><span style='font-size:0.6em;color:var(--ink-3);margin-left:4px'>/ 100</span>",
+            f"Grade {grade}",
+            delta="COMPOSITE",
+            title="Weighted reliability index across task completion (35%), verification hygiene (30%), first-pass tool success (20%), and edit stability (15%).",
+        ),
+        _st(
+            "task_completion",
+            f"{c_rate}%",
+            f"{clean_completed} verified sessions",
+            delta="TASK RESOLUTION",
+            dcls=c_cls,
+            title="Percentage of sessions that resolved cleanly without trailing tool errors or unverified changes.",
+        ),
+        _st(
+            "turns_per_task",
+            f"{turns_task} turns",
+            "avg turns / completion",
+            delta="CONVERSATION EFFICIENCY",
+            title="Average number of conversation turns required to achieve a verified clean task completion.",
+        ),
+        _st(
+            "time_per_task",
+            f"{time_task_min} min",
+            "avg elapsed / completion",
+            delta="DELIVERY SPEED",
+            title="Average wall-clock duration in minutes from session start to verified resolution.",
+        ),
+        _st(
+            "first_pass_success",
+            f"{fsr}%",
+            f"{err_rate}% error rate",
+            delta="TOOL RELIABILITY",
+            dcls=fsr_cls,
+            title="Share of tool executions that succeeded on their first attempt without returning execution errors or non-zero exit codes.",
+        ),
+        _st(
+            "verification_rate",
+            f"{v_rate}%",
+            f"{sessions_tests} of {sessions_edits} edit sessions",
+            delta="TEST HYGIENE",
+            dcls=v_cls,
+            title="Percentage of sessions containing file modifications that executed an automated test runner or linter (pytest, npm test, ruff, etc.).",
+        ),
+        _st(
+            "followup_fixes",
+            f"{followup_fixes}",
+            f"{followup_rate}% rework rate",
+            delta="FOLLOW-UP FIXES",
+            title="Follow-up code modifications and bugfixes applied to the same files in subsequent turns.",
+        ),
+        _st(
+            "comment_ratio",
+            f"{comment_ratio}x",
+            f"{comment_density}% comment density",
+            delta="CODE COMMENT DENSITY",
+            title="Ratio of inline comments to executable code lines in modifications.",
+        ),
+        _st(
+            "verbosity",
+            f"{verbosity_tok} tok",
+            f"{verbosity_lvl} explanation",
+            delta="VERBOSITY LEVEL",
+            title="Average generated output tokens per conversational turn.",
+        ),
+        _st(
+            "edit_thrash_files",
+            f"{thrash_cnt}",
+            f"{qm.get('total_edits', 0)} total file edits",
+            delta="REWORK CHURN",
+            dcls=thrash_cls,
+            title="Files edited 3 or more times within the same session, indicating thrashing or lack of convergence.",
+        ),
+    ]
+
+    thrashed_files_list = qm.get("thrashed_files_list") or []
+    thrash_html = ""
+    if thrashed_files_list:
+        thrashed_items = "".join(
+            f"<li><code>{escape(_mask_home(f))}</code></li>"
+            for f in thrashed_files_list
+        )
+        thrash_html = (
+            f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid #3d3014;border-radius:4px;'>"
+            f"<b style='color:var(--gold);font-size:12px;'>⚠️ Repeatedly Modified Files (Thrashing Detected):</b>"
+            f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{thrashed_items}</ul>"
+            f"</div>"
+        )
+
+    breakdown_rows = []
+    # Agent breakdown rows
+    by_agent = qm.get("by_agent") or {}
+    for ak, a_info in by_agent.items():
+        a_score = a_info.get("quality_score", 100)
+        a_grade = a_info.get("grade", "A")
+        a_comp = a_info.get("task_completion_rate_pct", 100.0)
+        a_turns = a_info.get("turns_per_completion_avg", 1.0)
+        a_time = a_info.get("duration_minutes_per_completion_avg", 0.0)
+        a_v_rate = a_info.get("verification_rate_pct", 100.0)
+        a_fsr = a_info.get("first_pass_success_rate_pct", 100.0)
+        a_fixes = a_info.get("followup_code_fixes_count", 0)
+        a_comm = a_info.get("comment_to_code_ratio", 0.0)
+        a_verb = a_info.get("verbosity_tokens_per_turn", 0.0)
+        a_sess = a_info.get("sessions", 0)
+        badge_style = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if ak == "antigravity"
+            else (
+                "color:var(--blue);border-color:#1e355b;background:#0d1c33"
+                if ak == "claude"
+                else "color:var(--purple, #c084fc);border-color:#3b1e5b;background:#1a0d33"
+            )
+        )
+        score_badge = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if a_score >= 80
+            else (
+                "color:var(--gold);border-color:#3d3014;background:#241D0E"
+                if a_score >= 60
+                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
+            )
+        )
+        breakdown_rows.append(
+            f"<tr style='border-bottom:1px solid var(--line);'>"
+            f"<td style='padding:10px 14px;'><span class='pill' style='{badge_style};font-size:13px;padding:3px 10px;font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
+            f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{a_score} ({a_grade})</span></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_comp}%</b></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_turns}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_time}m</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_v_rate}%</b></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_fsr}%</b></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_fixes}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_comm}x</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_verb} tok</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{a_sess}</td>"
+            f"</tr>"
+        )
+
+    # Model breakdown rows
+    by_model = qm.get("by_model") or []
+    for m_info in by_model:
+        m_name = m_info.get("model", "unknown")
+        m_score = m_info.get("quality_score", 100)
+        m_grade = m_info.get("grade", "A")
+        m_comp = m_info.get("task_completion_rate_pct", 100.0)
+        m_turns = m_info.get("turns_per_completion_avg", 1.0)
+        m_time = m_info.get("duration_minutes_per_completion_avg", 0.0)
+        m_v_rate = m_info.get("verification_rate_pct", 100.0)
+        m_fsr = m_info.get("first_pass_success_rate_pct", 100.0)
+        m_fixes = m_info.get("followup_code_fixes_count", 0)
+        m_comm = m_info.get("comment_to_code_ratio", 0.0)
+        m_verb = m_info.get("verbosity_tokens_per_turn", 0.0)
+        m_sess = m_info.get("sessions", 0)
+        score_badge = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if m_score >= 80
+            else (
+                "color:var(--gold);border-color:#3d3014;background:#241D0E"
+                if m_score >= 60
+                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
+            )
+        )
+        breakdown_rows.append(
+            f"<tr style='border-bottom:1px solid var(--line);'>"
+            f"<td class='m' style='padding:10px 14px;'><code style='color:var(--ink);font-size:14px;font-weight:500;'>{escape(m_name)}</code></td>"
+            f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{m_score} ({m_grade})</span></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_comp}%</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_turns}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_time}m</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_v_rate}%</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_fsr}%</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_fixes}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_comm}x</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_verb} tok</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-3);'>{m_sess}</td>"
+            f"</tr>"
+        )
+
+    matrix_table = ""
+    if breakdown_rows:
+        matrix_table = (
+            f"<div style='margin-top:20px;'>"
+            f"<div style='font-size:14px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:10px;display:flex;align-items:center;gap:8px;'>"
+            f"<span>ENGINE &amp; MODEL RELIABILITY COMPARISON</span>"
+            f"</div>"
+            f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>ENGINE / MODEL</th>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TURNS/TASK</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TIME/TASK</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FOLLOW-UP FIXES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMMENT RATIO</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERBOSITY</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
+            f"</tr></thead>"
+            f"<tbody>{''.join(breakdown_rows)}</tbody>"
+            f"</table>"
+            f"</div>"
+        )
+
+    category_table = ""
+    by_category = qm.get("by_category") or {}
+    category_rows = []
+    for ck, c_info in by_category.items():
+        c_sessions = c_info.get("sessions", 0)
+        if c_sessions == 0:
+            continue
+        c_label = c_info.get("label", ck.capitalize())
+        c_icon = c_info.get("icon", "💻")
+        c_desc = c_info.get("desc", "")
+        c_score = c_info.get("quality_score", 100)
+        c_grade = c_info.get("grade", "A")
+        c_comp = c_info.get("task_completion_rate_pct", 100.0)
+        c_turns = c_info.get("turns_per_completion_avg", 1.0)
+        c_time = c_info.get("duration_minutes_per_completion_avg", 0.0)
+        c_verif = c_info.get("verification_rate_pct", 100.0)
+        c_fsr = c_info.get("first_pass_success_rate_pct", 100.0)
+        c_fixes = c_info.get("followup_code_fixes_count", 0)
+        c_comm = c_info.get("comment_to_code_ratio", 0.0)
+        c_share = c_info.get("share_pct", 0.0)
+        best_agent = c_info.get("best_agent", "—")
+        best_model = c_info.get("best_model", "—")
+
+        score_badge = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if c_score >= 80
+            else (
+                "color:var(--gold);border-color:#3d3014;background:#241D0E"
+                if c_score >= 60
+                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
+            )
+        )
+        category_rows.append(
+            f"<tr style='border-bottom:1px solid var(--line);'>"
+            f"<td style='padding:12px 14px;'>"
+            f"<div style='display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink);'>"
+            f"<span>{c_icon}</span><span>{escape(c_label)}</span>"
+            f"<span style='font-size:11px;color:var(--ink-3);font-weight:400;'>({c_share}%)</span>"
+            f"</div>"
+            f"<div style='font-size:12px;color:var(--ink-3);margin-top:2px;'>{escape(c_desc)}</div>"
+            f"</td>"
+            f"<td style='padding:12px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{c_score} ({c_grade})</span></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_comp}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_turns}</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_time}m</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_verif}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_fsr}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_fixes}</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_comm}x</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{c_sessions}</td>"
+            f"<td style='padding:12px 14px;font-size:13px;'>"
+            f"<div><b style='color:var(--ink);'>{escape(best_agent)}</b></div>"
+            f"<div style='color:var(--ink-3);font-size:11px;'>{escape(best_model)}</div>"
+            f"</td>"
+            f"</tr>"
+        )
+
+    if category_rows:
+        category_table = (
+            f"<div style='margin-top:28px;'>"
+            f"<div style='font-size:14px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:10px;display:flex;align-items:center;gap:8px;'>"
+            f"<span>CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN</span>"
+            f"</div>"
+            f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TASK CATEGORY</th>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TURNS/TASK</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TIME/TASK</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FOLLOW-UP FIXES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMMENT RATIO</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>BEST FIT ENGINE / MODEL</th>"
+            f"</tr></thead>"
+            f"<tbody>{''.join(category_rows)}</tbody>"
+            f"</table>"
+            f"</div>"
+        )
+
+    return (
+        f"<div class='grid'>{''.join(tiles)}</div>"
+        f"<div class='pan' style='margin-top:14px;'>"
+        f"<div class='ph'><span>~/ace/quality_breakdown</span><span class='live'><i></i>LOCAL VERIFIED</span></div>"
+        f"<div class='pb'>"
+        f"<div style='display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);'>"
+        f"<div><b style='color:var(--ink);'>{sessions_tests}</b> test-verified sessions</div>"
+        f"<div><b style='color:var(--ink);'>{sessions_edits}</b> editing sessions</div>"
+        f"<div><b style='color:var(--ink);'>{qm.get('total_tool_calls', 0)}</b> total tool executions</div>"
+        f"<div><b style='color:var(--ink);'>{redundant_reads}</b> redundant duplicate file reads</div>"
+        f"</div>"
+        f"{thrash_html}"
+        f"{matrix_table}"
+        f"{category_table}"
+        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. Correlates cost against first-pass tool correctness, test diligence, and domain task fit.</div>"
+        f"</div></div>"
+    )
+
+
 def _refs(d: Dict[str, Any]) -> Dict[str, Any]:
     """Grounded reference points, or an empty map. Never raises.
 
@@ -1915,6 +2264,7 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
 # the same reasoning that keeps _sec's id keyed off the section number.
 _NAV = (
     ("◫", "Overview", "01"),
+    ("🎯", "Code Quality", "02"),
     ("⇄", "Strategies", "04"),
     ("✦", "Recommendations", "06"),
     ("⚡", "Workflow Skills", "07"),
@@ -2217,7 +2567,7 @@ _GITHUB_ICON = (
 
 
 def _rail(d: Dict[str, Any]) -> str:
-    live = d["live"]
+    live = d.get("live") or {"turns": 0}
     # Each entry jumps to a section already on the page -- one document, not five views.
     # Anchors rather than divs: clickable without JS.
     nav = "".join(
@@ -2369,11 +2719,23 @@ def render(d: Dict[str, Any]) -> str:
     # on to "what it cost" and "what to do about it".
     b.append(_fleet(d.get("fleet"), _refs(d)))
 
-    peak = h.get("peak_context") or 0
-    # § 02 — spend
+    # § 02 — code quality & reliability
     b.append(
         _sec(
             "02",
+            "CODE QUALITY & RELIABILITY",
+            "Agent execution stability & test hygiene.",
+            "Verification rate, rework thrash, and error recovery.",
+            "LOCAL",
+        )
+    )
+    b.append(_quality(d.get("quality")))
+
+    peak = h.get("peak_context") or 0
+    # § 03 — spend
+    b.append(
+        _sec(
+            "03",
             "SPEND",
             "Where the money goes.",
             "List price on your transcripts.",
