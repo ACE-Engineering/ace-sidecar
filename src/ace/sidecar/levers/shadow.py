@@ -64,8 +64,6 @@ from ace.sidecar.levers.registry import (
     propose_safely,
     resolve_modes,
 )
-from ace.sidecar.levers.splice import SpliceRefused, apply_splices
-from ace.sidecar.levers.splice import plan as splice_plan
 from ace.sidecar.levers.types import ContentRef, Session, ToolCall, Turn, Usage
 
 __all__ = [
@@ -932,6 +930,22 @@ class ShadowRunner:
         if not edits:
             return None, info
 
+        # Imported HERE, not at module scope. `ace_skills` supplies the splice mechanics and
+        # is also where levers come from, so this line can only be reached in an environment
+        # that already has it: no lever package means no lever resolves to `on`, means
+        # `actuate` returns above. Importing at module scope would make ace-skills a hard
+        # dependency of the open-source sidecar, which is exactly the direction this package
+        # is arranged to avoid — the sidecar is a measurement product that GAINS
+        # optimizations when a package providing them is present.
+        try:
+            from ace_skills.splice import SpliceRefused, apply_splices, last_breakpoint_offset
+            from ace_skills.splice import plan as splice_plan
+        except ImportError:
+            info["refused"].append(
+                "ace-skills is not installed — actuation needs its splice mechanics"
+            )
+            return None, info
+
         try:
             splices, refused = splice_plan(raw, edits, call_ids, replacements=replacements)
             info["refused"] = refused
@@ -944,6 +958,18 @@ class ShadowRunner:
             return None, info
         except Exception:
             log.warning("[levers] actuate failed; sending the original", exc_info=True)
+            return None, info
+
+        # The invariant re-asserted LOCALLY, against a boundary this process computed, after
+        # third-party code produced the bytes. `plan` already refuses an edit at or before the
+        # breakpoint, but that guard now lives in an installable package — and the cost of it
+        # being wrong is every cached prefix on the machine re-written at up to 12.5x. A
+        # safety property whose only enforcement is in code someone else can replace is not
+        # enforced. This costs one comparison.
+        boundary = last_breakpoint_offset(raw)
+        if boundary >= 0 and new_raw[: boundary + 1] != raw[: boundary + 1]:
+            log.warning("[levers] actuation touched the cached prefix; sending the original")
+            info["refused"].append("splice altered bytes at or before the cache breakpoint")
             return None, info
 
         info["spliced"] = len(splices)

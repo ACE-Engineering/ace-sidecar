@@ -662,7 +662,7 @@ def test_actuation_splices_the_tail_and_leaves_the_cached_prefix_alone(store):
     assert len(new["messages"][4]["content"][0]["content"]) < len(DUMP)
 
     # everything the cache holds is byte-for-byte identical
-    from ace.sidecar.levers.splice import last_breakpoint_offset
+    from ace_skills.splice import last_breakpoint_offset
     bp = last_breakpoint_offset(sent)
     assert bp > 0
     assert got[: bp + 1] == sent[: bp + 1], "bytes at or before the breakpoint changed"
@@ -745,3 +745,31 @@ def test_actuation_does_not_count_tokens_on_the_hot_path(store):
     new_raw, info = runner.actuate(json.dumps(body).encode(), body)
     assert calls, "the lever did run"
     assert new_raw is None, "a counting lever must not block or mutate the turn"
+
+
+def test_the_sidecar_still_works_with_no_lever_package_installed(store, monkeypatch):
+    """The dependency direction that matters. `ace-skills` supplies levers AND the splice
+    mechanics; the sidecar must not require either. No package means no lever resolves to
+    `on`, means actuation is never reached — and if it somehow is, it refuses rather than
+    raising."""
+    import builtins
+    real = builtins.__import__
+
+    def blocked(name, *a, **k):
+        if name.startswith("ace_skills"):
+            raise ImportError(f"No module named {name!r}")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+
+    from ace.sidecar.levers.shadow import ShadowRunner
+    # TruncAll.id is "tail_truncation" — the config key must name the lever that is on, or
+    # this test passes for the wrong reason (nothing enabled, so nothing to splice).
+    runner = ShadowRunner(config={"levers": {"tail_truncation": {"mode": "on",
+                                                                 "keep_bytes": 256}}})
+    runner._levers = (L.RegisteredLever(lever=TruncAll(), dist="test"),)
+    assert runner.actuating, "the lever must actually be on for this to prove anything"
+    body = cached_body()
+    new_raw, info = runner.actuate(json.dumps(body).encode(), body)
+    assert new_raw is None, "no splice mechanics means the original bytes go out"
+    assert any("ace-skills is not installed" in r for r in info["refused"])
