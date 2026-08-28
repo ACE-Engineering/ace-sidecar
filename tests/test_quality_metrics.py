@@ -348,3 +348,149 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert "claude-sonnet-4-6" in html
     assert "gemini-3.6-flash" in html
     assert "ENGINE / MODEL" in html
+
+
+def test_quality_metrics_by_task_category() -> None:
+    from ace.sidecar.insights import (
+        _classify_session_task_category,
+        TASK_CAT_UI,
+        TASK_CAT_BACKEND,
+        TASK_CAT_TESTING,
+        TASK_CAT_DOCS,
+        TASK_CAT_RESEARCH,
+    )
+
+    # 1. UI session
+    s_ui = {
+        "session": "ui_sess",
+        "turns": [
+            {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "output_tokens": 50,
+                "model": "claude-sonnet-4-6",
+                "calls": [
+                    {"name": "write_to_file", "raw_target": "src/components/Header.tsx", "is_edit": True},
+                    {"name": "write_to_file", "raw_target": "src/styles/app.css", "is_edit": True},
+                ],
+            }
+        ],
+        "events": [],
+    }
+    assert _classify_session_task_category(s_ui) == TASK_CAT_UI
+
+    # 2. Testing session
+    s_test = {
+        "session": "test_sess",
+        "turns": [
+            {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "output_tokens": 50,
+                "model": "claude-sonnet-4-6",
+                "calls": [
+                    {"name": "write_to_file", "raw_target": "tests/test_api.py", "is_edit": True, "is_test_file": True},
+                    {"name": "Bash", "command": "pytest", "is_test_run": True},
+                ],
+            }
+        ],
+        "events": [],
+    }
+    assert _classify_session_task_category(s_test) == TASK_CAT_TESTING
+
+    # 3. Docs session
+    s_docs = {
+        "session": "docs_sess",
+        "turns": [
+            {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "output_tokens": 50,
+                "model": "claude-sonnet-4-6",
+                "calls": [
+                    {"name": "write_to_file", "raw_target": "docs/architecture.md", "is_edit": True},
+                    {"name": "replace_file_content", "raw_target": "README.md", "is_edit": True},
+                ],
+            }
+        ],
+        "events": [],
+    }
+    assert _classify_session_task_category(s_docs) == TASK_CAT_DOCS
+
+    # 4. Research session (read-only)
+    s_res = {
+        "session": "res_sess",
+        "turns": [
+            {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "output_tokens": 50,
+                "model": "gemini-3.6-flash",
+                "calls": [
+                    {"name": "view_file", "raw_target": "src/server.py", "is_view": True},
+                    {"name": "grep_search", "raw_target": "main", "is_view": False},
+                ],
+            }
+        ],
+        "events": [],
+    }
+    assert _classify_session_task_category(s_res) == TASK_CAT_RESEARCH
+
+    # 5. Backend session
+    s_back = {
+        "session": "back_sess",
+        "turns": [
+            {
+                "input_tokens": 100,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "output_tokens": 50,
+                "model": "gpt-5.3-codex",
+                "calls": [
+                    {"name": "replace_file_content", "raw_target": "src/ace/gateway/proxy.py", "is_edit": True, "is_src_file": True},
+                ],
+            }
+        ],
+        "events": [],
+    }
+    assert _classify_session_task_category(s_back) == TASK_CAT_BACKEND
+
+    # Multi-session aggregation in quality_metrics
+    sess_all = [s_ui, s_test, s_docs, s_res, s_back]
+    qm = quality_metrics(sess_all)
+    assert "by_category" in qm
+    assert TASK_CAT_UI in qm["by_category"]
+    assert TASK_CAT_BACKEND in qm["by_category"]
+    assert TASK_CAT_TESTING in qm["by_category"]
+    assert TASK_CAT_DOCS in qm["by_category"]
+    assert TASK_CAT_RESEARCH in qm["by_category"]
+
+    ui_cat = qm["by_category"][TASK_CAT_UI]
+    assert ui_cat["sessions"] == 1
+    assert ui_cat["label"] == "UI & Frontend"
+
+    # Prometheus export
+    payload = _build_payload(sess_all, capture=None, range_key="all", agent="all", store_path=None)
+    prom_text = format_prometheus_metrics(payload)
+    assert 'ace_quality_category_score{category="ui"}' in prom_text
+    assert 'ace_quality_category_completion_rate{category="ui"}' in prom_text
+
+    # Render dashboard
+    html = render(payload)
+    assert "CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN" in html or "CAPABILITY & PERFORMANCE BY CODING TASK DOMAIN" in html
+    assert "UI &amp; Frontend" in html or "UI & Frontend" in html
+

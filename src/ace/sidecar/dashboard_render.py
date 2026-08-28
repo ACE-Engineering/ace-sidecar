@@ -911,6 +911,79 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"</div>"
         )
 
+    category_table = ""
+    by_category = qm.get("by_category") or {}
+    category_rows = []
+    for ck, c_info in by_category.items():
+        c_sessions = c_info.get("sessions", 0)
+        if c_sessions == 0:
+            continue
+        c_label = c_info.get("label", ck.capitalize())
+        c_icon = c_info.get("icon", "💻")
+        c_desc = c_info.get("desc", "")
+        c_score = c_info.get("quality_score", 100)
+        c_grade = c_info.get("grade", "A")
+        c_comp = c_info.get("task_completion_rate_pct", 100.0)
+        c_verif = c_info.get("verification_rate_pct", 100.0)
+        c_fsr = c_info.get("first_pass_success_rate_pct", 100.0)
+        c_thrash = c_info.get("thrashed_files_count", 0)
+        c_share = c_info.get("share_pct", 0.0)
+        best_agent = c_info.get("best_agent", "—")
+        best_model = c_info.get("best_model", "—")
+
+        score_badge = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if c_score >= 80
+            else (
+                "color:var(--gold);border-color:#3d3014;background:#241D0E"
+                if c_score >= 60
+                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
+            )
+        )
+        category_rows.append(
+            f"<tr style='border-bottom:1px solid var(--line);'>"
+            f"<td style='padding:12px 14px;'>"
+            f"<div style='display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink);'>"
+            f"<span>{c_icon}</span><span>{escape(c_label)}</span>"
+            f"<span style='font-size:11px;color:var(--ink-3);font-weight:400;'>({c_share}%)</span>"
+            f"</div>"
+            f"<div style='font-size:12px;color:var(--ink-3);margin-top:2px;'>{escape(c_desc)}</div>"
+            f"</td>"
+            f"<td style='padding:12px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{c_score} ({c_grade})</span></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_comp}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_verif}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_fsr}%</b></td>"
+            f"<td class='num' style='padding:12px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(c_thrash) + '</b>' if c_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
+            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{c_sessions}</td>"
+            f"<td style='padding:12px 14px;font-size:13px;'>"
+            f"<div><b style='color:var(--ink);'>{escape(best_agent)}</b></div>"
+            f"<div style='color:var(--ink-3);font-size:11px;'>{escape(best_model)}</div>"
+            f"</td>"
+            f"</tr>"
+        )
+
+    if category_rows:
+        category_table = (
+            f"<div style='margin-top:28px;'>"
+            f"<div style='font-size:14px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:10px;display:flex;align-items:center;gap:8px;'>"
+            f"<span>CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN</span>"
+            f"</div>"
+            f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TASK CATEGORY</th>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>THRASH FILES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>BEST FIT ENGINE / MODEL</th>"
+            f"</tr></thead>"
+            f"<tbody>{''.join(category_rows)}</tbody>"
+            f"</table>"
+            f"</div>"
+        )
+
     return (
         f"<div class='grid'>{''.join(tiles)}</div>"
         f"<div class='pan' style='margin-top:14px;'>"
@@ -924,7 +997,8 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         f"</div>"
         f"{thrash_html}"
         f"{matrix_table}"
-        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. Correlates cost against first-pass tool correctness and test diligence.</div>"
+        f"{category_table}"
+        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. Correlates cost against first-pass tool correctness, test diligence, and domain task fit.</div>"
         f"</div></div>"
     )
 

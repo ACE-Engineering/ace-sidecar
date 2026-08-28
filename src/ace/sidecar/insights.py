@@ -188,6 +188,109 @@ _SOURCE_FILE_EXTS = (
     ".vue",
 )
 
+TASK_CAT_UI = "ui"
+TASK_CAT_BACKEND = "backend"
+TASK_CAT_TESTING = "testing"
+TASK_CAT_DOCS = "docs"
+TASK_CAT_RESEARCH = "research"
+
+TASK_CATEGORIES: Dict[str, Dict[str, str]] = {
+    TASK_CAT_UI: {
+        "label": "UI & Frontend",
+        "icon": "🎨",
+        "desc": "User interfaces, web layouts, components, templates, and styling.",
+    },
+    TASK_CAT_BACKEND: {
+        "label": "Backend & Systems",
+        "icon": "⚙️",
+        "desc": "Server logic, database models, APIs, pipelines, and algorithms.",
+    },
+    TASK_CAT_TESTING: {
+        "label": "Testing & QA",
+        "icon": "🧪",
+        "desc": "Unit/integration tests, test harnesses, assertions, and linter auto-fixes.",
+    },
+    TASK_CAT_DOCS: {
+        "label": "Docs & Specs",
+        "icon": "📝",
+        "desc": "Architecture documentation, implementation plans, and walkthroughs.",
+    },
+    TASK_CAT_RESEARCH: {
+        "label": "Codebase Research",
+        "icon": "🔍",
+        "desc": "Codebase navigation, symbol search, architecture analysis, and comprehension.",
+    },
+}
+
+_UI_EXTS = (
+    ".tsx",
+    ".jsx",
+    ".vue",
+    ".svelte",
+    ".css",
+    ".scss",
+    ".sass",
+    ".html",
+    ".svg",
+)
+_DOC_EXTS = (".md", ".mdx", ".rst", ".txt", ".adoc")
+
+
+def _classify_session_task_category(session: Dict[str, Any]) -> str:
+    """Classifies a coding session into a primary task domain based on tool calls and target files."""
+    turns = session.get("turns") or []
+    edits: List[str] = []
+    has_test_runs = False
+
+    for t in turns:
+        for c in t.get("calls") or []:
+            if c.get("is_edit"):
+                tgt = str(c.get("raw_target") or c.get("target") or "").lower()
+                edits.append(tgt)
+            if c.get("is_test_run"):
+                has_test_runs = True
+
+    if not edits:
+        return TASK_CAT_RESEARCH
+
+    ui_count = sum(
+        1
+        for e in edits
+        if any(e.endswith(ext) for ext in _UI_EXTS)
+        or any(
+            k in e
+            for k in (
+                "/ui/",
+                "/frontend/",
+                "/components/",
+                "/views/",
+                "/styles/",
+                "/web/",
+                "/templates/",
+                "dashboard_render",
+            )
+        )
+    )
+    test_count = sum(1 for e in edits if _TEST_FILE_RE.search(e))
+    doc_count = sum(
+        1
+        for e in edits
+        if any(e.endswith(ext) for ext in _DOC_EXTS)
+        or any(k in e for k in ("doc", "readme", "walkthrough", "plan"))
+    )
+    backend_count = len(edits) - ui_count - test_count - doc_count
+
+    counts = {
+        TASK_CAT_UI: ui_count,
+        TASK_CAT_TESTING: test_count,
+        TASK_CAT_DOCS: doc_count,
+        TASK_CAT_BACKEND: max(0, backend_count),
+    }
+    top_cat = max(counts.items(), key=lambda kv: kv[1])
+    if top_cat[1] > 0:
+        return top_cat[0]
+    return TASK_CAT_BACKEND
+
 
 def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     target_raw = None
@@ -2204,11 +2307,13 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     Includes top-line metrics along with breakdowns:
     - by_agent: Quality scores partitioned per agent engine (Claude Code, Antigravity, Codex).
     - by_model: Quality scores partitioned per LLM model.
+    - by_category: Quality and capability metrics partitioned per coding task domain (UI, Backend, Testing, Docs, Research).
     """
     overall = _calc_quality_block(sess)
     if not sess:
         overall["by_agent"] = {}
         overall["by_model"] = []
+        overall["by_category"] = {}
         return overall
 
     # Group by agent
@@ -2254,8 +2359,62 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             }
         )
 
+    # Group by task category
+    by_category: Dict[str, Any] = {}
+    category_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for s in sess:
+        ck = _classify_session_task_category(s)
+        category_groups.setdefault(ck, []).append(s)
+
+    for ck, cat_meta in TASK_CATEGORIES.items():
+        c_sess = category_groups.get(ck) or []
+        block = _calc_quality_block(c_sess)
+
+        best_agent = "—"
+        best_agent_score = -1
+        for ak in (AGENT_CLAUDE, AGENT_ANTIGRAVITY, AGENT_CODEX):
+            sub_ak = [s for s in c_sess if (s.get("agent_type") or AGENT_CLAUDE) == ak]
+            if sub_ak:
+                sc = _calc_quality_block(sub_ak)["quality_score"]
+                if sc > best_agent_score:
+                    best_agent_score = sc
+                    best_agent = AGENTS.get(ak, ak.capitalize())
+
+        best_model = "—"
+        best_model_score = -1
+        cat_models = set(
+            t.get("model")
+            for s in c_sess
+            for t in s.get("turns", [])
+            if t.get("model") and not str(t.get("model")).startswith("<")
+        )
+        for m in cat_models:
+            sub_m = []
+            for s in c_sess:
+                proj = [t for t in s.get("turns", []) if t.get("model") == m]
+                if proj:
+                    sub_m.append({"turns": proj, "events": s.get("events", [])})
+            if sub_m:
+                sc = _calc_quality_block(sub_m)["quality_score"]
+                if sc > best_model_score:
+                    best_model_score = sc
+                    best_model = m
+
+        by_category[ck] = {
+            "category": ck,
+            "label": cat_meta["label"],
+            "icon": cat_meta["icon"],
+            "desc": cat_meta["desc"],
+            "sessions": len(c_sess),
+            "share_pct": round(len(c_sess) / max(1, len(sess)) * 100.0, 1),
+            "best_agent": best_agent,
+            "best_model": best_model,
+            **block,
+        }
+
     overall["by_agent"] = by_agent
     overall["by_model"] = by_model
+    overall["by_category"] = by_category
     return overall
 
 
@@ -3209,6 +3368,17 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     lines.append("# HELP ace_quality_test_to_code_ratio Ratio of test file edits to source file edits.")
     lines.append("# TYPE ace_quality_test_to_code_ratio gauge")
     lines.append(f'ace_quality_test_to_code_ratio {qm.get("test_to_code_ratio", 1.0)}')
+
+    # Task Category Performance Metrics
+    lines.append("# HELP ace_quality_category_score Quality score partitioned by task category.")
+    lines.append("# TYPE ace_quality_category_score gauge")
+    for cat_id, cat_info in (qm.get("by_category") or {}).items():
+        lines.append(f'ace_quality_category_score{{category="{cat_id}"}} {cat_info.get("quality_score", 100)}')
+
+    lines.append("# HELP ace_quality_category_completion_rate Task completion rate partitioned by task category.")
+    lines.append("# TYPE ace_quality_category_completion_rate gauge")
+    for cat_id, cat_info in (qm.get("by_category") or {}).items():
+        lines.append(f'ace_quality_category_completion_rate{{category="{cat_id}"}} {cat_info.get("task_completion_rate", 1.0)}')
 
     return "\n".join(lines) + "\n"
 
