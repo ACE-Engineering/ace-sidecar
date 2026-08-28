@@ -1,6 +1,6 @@
 # ACE Sidecar
 
-Local developer observability for AI coding agents — see what your Claude Code and Antigravity sessions actually cost.
+Local developer observability for AI coding agents — see what your Claude Code, Antigravity, and OpenAI Codex sessions actually cost.
 
 [![CI](https://github.com/ACE-Engineering/ace-sidecar/actions/workflows/ci.yml/badge.svg)](https://github.com/ACE-Engineering/ace-sidecar/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/ace-sidecar.svg)](https://pypi.org/project/ace-sidecar/)
@@ -9,15 +9,15 @@ Local developer observability for AI coding agents — see what your Claude Code
 
 ![ACE Sidecar dashboard](docs/assets/dashboard_preview.jpg)
 
-**[What it does](#what-it-does)** · **[Requirements](#requirements)** · **[Install](#install)** · **[Quickstart](#quickstart)** · **[Features](#features)** · **[Who builds this](#who-builds-this)** · **[Configuration](#configuration)** · **[Endpoints](#endpoints)** · **[Development](#development)** · **[License](#license)**
+**[What it does](#what-it-does)** · **[Requirements](#requirements)** · **[Install](#install)** · **[Check Version](#check-version)** · **[Upgrade](#upgrade)** · **[Quickstart](#quickstart)** · **[Features](#features)** · **[Who builds this](#who-builds-this)** · **[Configuration](#configuration)** · **[Endpoints](#endpoints)** · **[Development](#development)** · **[License](#license)**
 
 ---
 
 ## What it does
 
-ACE Sidecar runs a proxy on your machine in front of the model provider, recording what each turn costs — tokens in and out, what came from cache, how long you waited. It also reads your existing transcripts (`~/.claude/projects`, `~/.gemini/antigravity/brain`), so there is history to show from the first run.
+ACE Sidecar runs a proxy on your machine in front of model providers, recording what each turn costs — tokens in and out, what came from cache, how long you waited. It automatically reads your existing local transcripts (`~/.claude/projects`, `~/.gemini/antigravity/brain`, `~/.codex/sessions`), providing unified history and cost tracking from the first run.
 
-Nothing leaves your machine: no account, no upload. Metrics live in a local SQLite file you can delete.
+Nothing leaves your machine: no account, no upload. Metrics live in a local SQLite file you can delete anytime.
 
 Built by [ACE Fleet](https://acefleet.dev) — see [Who builds this](#who-builds-this).
 
@@ -27,7 +27,7 @@ Built by [ACE Fleet](https://acefleet.dev) — see [Who builds this](#who-builds
 
 - **Python 3.12+** — the one hard requirement. Check with `python3 --version`.
 - macOS, Linux, or Windows. No admin rights needed.
-- **A coding agent you already use.** Claude Code and Google Antigravity are supported today. However you pay for it — subscription or API key — is how it stays paid; the sidecar adds no account of its own.
+- **A coding agent you already use.** Claude Code, Google Antigravity, and OpenAI Codex are supported. However you pay for it — subscription or API key — is how it stays paid; the sidecar adds no account of its own.
 
 Need a newer Python? `brew install python@3.12` (macOS), `sudo apt install python3.12` (Debian/Ubuntu), `sudo dnf install python3.12` (Fedora), [python.org](https://www.python.org/downloads/) (Windows), or `uv python install 3.12` (anywhere).
 
@@ -35,41 +35,78 @@ Need a newer Python? `brew install python@3.12` (macOS), `sudo apt install pytho
 
 ## Install
 
+### Option A: Via `uv` (Recommended & Fastest)
 ```bash
-uv tool install ace-sidecar     # or: pipx install ace-sidecar
+uv tool install ace-sidecar
 ```
 
-Both give `ace` its own isolated environment and put it on your PATH. With plain pip, use a virtual environment:
+### Option B: Via `pipx`
+```bash
+pipx install ace-sidecar
+```
 
+### Option C: Via `pip` (in a virtual environment)
 ```bash
 python3.12 -m venv ~/.venvs/ace && source ~/.venvs/ace/bin/activate
 pip install ace-sidecar
 ```
 
-**If install fails with `Could not find a version that satisfies the requirement ace-sidecar`**, your Python is older than 3.12. The message blames the package, but the package is fine — the interpreter is too old.
+### Option D: Direct from GitHub or Local Source
+```bash
+# From GitHub release tag
+uv tool install git+https://github.com/ACE-Engineering/ace-sidecar.git@v0.2.0
 
-**If `ace: command not found` after installing**, run `uv tool update-shell` or `pipx ensurepath`, then open a new terminal.
+# From cloned repository (editable for local development)
+uv tool install --editable .
+```
+
+---
+
+## Check Version
+
+Check which version of `ace-sidecar` is currently installed on your system:
+
+| Tool | Command | Expected Output |
+| :--- | :--- | :--- |
+| **`uv`** | `uv tool list` | `ace-sidecar v0.2.0` |
+| **`pip`** | `pip show ace-sidecar` | `Version: 0.2.0` |
+| **`pipx`** | `pipx list` | `package ace-sidecar 0.2.0` |
+| **Python** | `python3 -c "import importlib.metadata; print(importlib.metadata.version('ace-sidecar'))"` | `0.2.0` |
+
+---
+
+## Upgrade
+
+To upgrade an existing installation to the latest release:
+
+```bash
+# With uv
+uv tool upgrade ace-sidecar
+# (or force fresh index): uv tool install --force --reinstall --refresh ace-sidecar
+
+# With pipx
+pipx upgrade ace-sidecar
+
+# With pip
+pip install --upgrade ace-sidecar
+```
+
+### Troubleshooting
+- **`Could not find a version that satisfies the requirement ace-sidecar`**: Your active Python is older than 3.12. Check `python3 --version`.
+- **`ace: command not found`**: Run `uv tool update-shell` or `pipx ensurepath`, then restart your terminal.
 
 ---
 
 ## Quickstart
 
+Start the sidecar and open the dashboard:
+
 ```bash
 ace up
-```
-
-Then point your agent at it and open the dashboard:
-
-```bash
-eval "$(ace env)"                       # exports ANTHROPIC_BASE_URL
 open http://127.0.0.1:8787/dashboard
 ```
 
-Use your coding agent as normal — turns appear live, with your transcript history already loaded.
-
-On a Claude subscription, start with `ace up --no-key` (Claude Code sends its own credential and the sidecar relays it), or put `{"no_key": true}` in `~/.ace/config.json`. `ace up --help` lists every flag.
-
-Antigravity needs no setup and no base URL: it is read from its transcripts on disk, so its sessions appear in the dashboard whether or not the sidecar was running at the time. Only Claude Code routes through the proxy.
+Use your coding agents as normal (**Claude Code**, **Google Antigravity**, or **OpenAI Codex**) — existing and new sessions appear automatically, with historical transcripts, token counts, and spend calculations loaded directly from disk.
 
 ---
 
@@ -137,7 +174,7 @@ Settings resolve in order: **CLI flags** → **`~/.ace/config.json`** → **envi
 |---|---|
 | `~/.ace/telemetry.db` | Turn telemetry — local SQLite, never uploaded |
 | `~/.ace/config.json` | Your settings |
-| `~/.claude/projects`, `~/.gemini/antigravity/brain` | Agent transcripts — read only |
+| `~/.claude/projects`, `~/.gemini/antigravity/brain`, `~/.codex/sessions` | Agent transcripts — read only |
 
 Delete `~/.ace/` to remove everything recorded.
 
