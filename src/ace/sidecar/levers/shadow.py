@@ -67,6 +67,8 @@ from ace.sidecar.levers.registry import (
 from ace.sidecar.levers.types import ContentRef, Session, ToolCall, Turn, Usage
 
 __all__ = [
+    "RevisitStats",
+    "observe_revisits",
     "TOOL_RESULT",
     "TOOL_USE",
     "Anchor",
@@ -154,6 +156,12 @@ class TurnMeasurement:
     reported_prompt_tokens: int = 0
 
     edits: Tuple[LiveEdit, ...] = ()
+    # What the agent did about the cut. See RevisitStats -- this is the cost side of a
+    # truncation, and the only figure here the ledger cannot derive on its own.
+    revisit_candidates: int = 0
+    revisits_observed: int = 0
+    revisits_paginated: int = 0
+    revisits_same_or_earlier: int = 0
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     note: str = ""
     elapsed_ms: float = 0.0
@@ -486,6 +494,125 @@ def price_delta(removed: int, usage: Usage, rates) -> Tuple[float, int, int, int
 
 
 # ---------------------------------------------------------------------------------------
+# Did the agent come back for what a lever removed?
+# ---------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RevisitStats:
+    """How often the agent returned to a result a lever proposed to cut.
+
+    This is the input that decides whether truncation is worth anything, and it is the only
+    one the ledger cannot supply. A truncation's saving is real and countable; its *cost* is
+    a re-read that may never happen, and pricing the saving without it reports a gross figure
+    as if it were net.
+
+    Measurable in shadow, without changing a single prompt: an agent request carries the whole
+    conversation, so when a lever proposes cutting the result at position *i*, this turn's own
+    body already shows whether the agent later went back to that target. Nothing has to be
+    applied, and nothing has to be remembered across requests.
+
+    ``paginated`` is separated out and is NOT a re-read. A later ``Read`` at a *higher* offset
+    fetches fresh bytes from the file; it would have happened whether or not the earlier
+    result was trimmed, so counting it as damage would condemn the lever for behaviour it did
+    not cause. Only a return to the same or an earlier region is evidence the agent needed
+    what was removed.
+    """
+
+    candidates: int = 0
+    revisited: int = 0
+    paginated: int = 0
+    same_or_earlier: int = 0
+
+    @property
+    def reread_rate(self) -> float:
+        """Share of proposed cuts the agent demonstrably came back for. 0..1."""
+        return self.same_or_earlier / self.candidates if self.candidates else 0.0
+
+
+_OFFSET_KEYS = ("offset", "start_line", "start", "skip")
+
+
+def _tool_uses(body: Mapping[str, Any]) -> List[Tuple[int, str, Mapping[str, Any]]]:
+    """``(ordinal, tool_name, tool_input)`` for every tool call in the body, in order."""
+    out: List[Tuple[int, str, Mapping[str, Any]]] = []
+    for msg in (body.get("messages") or []):
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            continue
+        for blk in _blocks(msg.get("content")):
+            if isinstance(blk, dict) and blk.get("type") == TOOL_USE:
+                inp = blk.get("input")
+                out.append((len(out), str(blk.get("name") or "?"),
+                            inp if isinstance(inp, dict) else {}))
+    return out
+
+
+def _target_of(tool_input: Mapping[str, Any]) -> Optional[str]:
+    """The primary path/command argument, the thing two calls share when they touch one file."""
+    for k in ("file_path", "path", "notebook_path", "command", "pattern"):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def _offset_of(tool_input: Mapping[str, Any]) -> int:
+    for k in _OFFSET_KEYS:
+        v = tool_input.get(k)
+        if isinstance(v, int):
+            return v
+    return 0
+
+
+def observe_revisits(
+    body: Mapping[str, Any],
+    edits: Sequence[Edit],
+    anchors: Mapping[Tuple[int, int], Anchor],
+) -> RevisitStats:
+    """Whether the agent later returned to any result these edits would have cut.
+
+    Runs over the request body the proxy already parsed, so it costs no network call and no
+    stored state. Conservative in both directions it can be wrong: a call with no identifiable
+    target is not counted as a candidate at all, and an ambiguous revisit counts *against* the
+    lever rather than for it.
+    """
+    uses = _tool_uses(body)
+    if not uses:
+        return RevisitStats()
+
+    # An edit addresses (turn_index, call_index); tool uses here are in the same order the
+    # session model produced them, so the turn index is the ordinal of the assistant message.
+    candidates = revisited = paginated = same_or_earlier = 0
+    for e in edits:
+        if e.kind not in ("truncate", "replace", "drop"):
+            continue
+        if (e.turn_index, e.call_index) not in anchors:
+            continue
+        idx = e.turn_index
+        if not (0 <= idx < len(uses)):
+            continue
+        _, name, inp = uses[idx]
+        target = _target_of(inp)
+        if target is None:
+            continue
+        candidates += 1
+        off0 = _offset_of(inp)
+        for j in range(idx + 1, len(uses)):
+            _, name2, inp2 = uses[j]
+            if _target_of(inp2) != target:
+                continue
+            revisited += 1
+            # A later offset reads bytes this result never held. Not damage.
+            if name2 == name and _offset_of(inp2) > off0:
+                paginated += 1
+            else:
+                same_or_earlier += 1
+            break
+
+    return RevisitStats(candidates, revisited, paginated, same_or_earlier)
+
+
+# ---------------------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------------------
 
@@ -662,6 +789,17 @@ class ShadowRunner:
                 note="lever proposed no edits",
                 elapsed_ms=(time.monotonic() - t0) * 1000.0,
             )
+
+        # Measured before the counterfactual is built: it reads the ORIGINAL body, which is
+        # the only place the agent's actual subsequent behaviour is recorded.
+        try:
+            rv = observe_revisits(body, proposal.edits, anchors)
+        except Exception:
+            rv = RevisitStats()
+        base_row.update(
+            revisit_candidates=rv.candidates, revisits_observed=rv.revisited,
+            revisits_paginated=rv.paginated, revisits_same_or_earlier=rv.same_or_earlier,
+        )
 
         try:
             new_body, applied, skipped = apply_edits(body, proposal.edits, anchors)

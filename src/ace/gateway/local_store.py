@@ -93,6 +93,14 @@ CREATE TABLE IF NOT EXISTS lever_turns (
     -- the NEXT turn and is therefore not netted into `usd`.
     prefix_safe           INTEGER DEFAULT 1,
     edits_applied         INTEGER DEFAULT 0,
+    -- The cost side of a truncation, observed rather than assumed: how many proposed cuts
+    -- the agent later came back for. `paginated` is excluded from `same_or_earlier` because
+    -- a read at a HIGHER offset fetches fresh bytes and would have happened regardless --
+    -- counting it would condemn the lever for behaviour it did not cause.
+    revisit_candidates    INTEGER DEFAULT 0,
+    revisits_observed     INTEGER DEFAULT 0,
+    revisits_paginated    INTEGER DEFAULT 0,
+    revisits_same_earlier INTEGER DEFAULT 0,
     -- Lever-authored counters, numeric values only -- see LocalStore._numeric_diagnostics.
     diagnostics           TEXT,
     note                  TEXT
@@ -119,7 +127,31 @@ class LocalStore:
         # already serialised behind the lock below.
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
+        self._migrate()
         self._db.commit()
+
+    def _migrate(self) -> None:
+        """Add columns a `lever_turns` written by an older build does not have.
+
+        CREATE TABLE IF NOT EXISTS silently keeps the OLD shape when the table already
+        exists, so a schema change alone does not reach a developer who has been running the
+        sidecar. Every added column is nullable with a default, so an old row reads back as
+        "not observed" rather than as a zero re-read rate -- which would be a measurement
+        claim nobody made.
+        """
+        try:
+            have = {r[1] for r in self._db.execute("PRAGMA table_info(lever_turns)")}
+        except Exception:
+            return
+        for col in ("revisit_candidates", "revisits_observed", "revisits_paginated",
+                    "revisits_same_earlier"):
+            if col not in have:
+                try:
+                    self._db.execute(
+                        f"ALTER TABLE lever_turns ADD COLUMN {col} INTEGER DEFAULT 0"
+                    )
+                except Exception:
+                    log.debug("[local_store] could not add %s", col, exc_info=True)
 
     # -- write -------------------------------------------------------------------------
 
@@ -200,6 +232,10 @@ class LocalStore:
                     1 if getattr(m, "priced", True) else 0,
                     0 if any(e.applied and not e.prefix_safe for e in edits) else 1,
                     sum(1 for e in edits if e.applied),
+                    int(getattr(m, "revisit_candidates", 0)),
+                    int(getattr(m, "revisits_observed", 0)),
+                    int(getattr(m, "revisits_paginated", 0)),
+                    int(getattr(m, "revisits_same_or_earlier", 0)),
                     self._numeric_diagnostics(getattr(m, "diagnostics", None)),
                     getattr(m, "note", ""),
                 ))
@@ -213,8 +249,9 @@ class LocalStore:
                     "INSERT INTO lever_turns (ts, request_id, session_id, lever, mode, model,"
                     " baseline_tokens, counterfactual_tokens, removed_tokens,"
                     " from_cache_write, from_input, from_cache_read, usd, priced,"
-                    " prefix_safe, edits_applied, diagnostics, note)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " prefix_safe, edits_applied, revisit_candidates, revisits_observed,"
+                    " revisits_paginated, revisits_same_earlier, diagnostics, note)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     prepared,
                 )
                 self._db.commit()
@@ -250,6 +287,9 @@ class LocalStore:
                            SUM(CASE WHEN priced=0 THEN 1 ELSE 0 END)       AS unpriced_turns,
                            SUM(CASE WHEN prefix_safe=0 THEN 1 ELSE 0 END)  AS unsafe_turns,
                            COALESCE(SUM(edits_applied), 0)                 AS edits_applied,
+                           COALESCE(SUM(revisit_candidates), 0)            AS revisit_candidates,
+                           COALESCE(SUM(revisits_same_earlier), 0)         AS revisits,
+                           COALESCE(SUM(revisits_paginated), 0)            AS revisits_paginated,
                            MAX(ts)                                         AS last_ts
                     FROM lever_turns {where}
                     GROUP BY lever

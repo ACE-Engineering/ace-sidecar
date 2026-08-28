@@ -1727,6 +1727,15 @@ def _measured_rows(d: Dict[str, Any]) -> List[str]:
         # A lever can measure NEGATIVE: an edit to already-cached content pays a re-write
         # premium the saving has to earn back. Showing that is the point of measuring.
         z = "" if usd > 0 else " z"
+        cand = r.get("revisit_candidates") or 0
+        back = r.get("revisits") or 0
+        paged = r.get("revisits_paginated") or 0
+        # The cost side, observed rather than assumed. A truncation's saving is countable;
+        # its cost is a re-read that may never happen, and reporting the saving alone quotes
+        # a gross figure as if it were net.
+        reread = (
+            f" &middot; {back / cand * 100:.0f}% re-read" if cand else ""
+        )
         tip = (
             f"Measured on {turns} proxied turn{'' if turns == 1 else 's'}: "
             f"{toks:,} tokens removed from the prompt actually sent, counted with the "
@@ -1735,6 +1744,12 @@ def _measured_rows(d: Dict[str, Any]) -> List[str]:
         )
         if unpriced:
             tip += f" {unpriced} turn(s) ran on a model with no catalog entry — unpriced, not free."
+        if cand:
+            tip += (
+                f" Of {cand} proposed cut(s) the agent came back for {back}; a further "
+                f"{paged} later call(s) were pagination to a new region and are NOT counted "
+                f"as re-reads — those fetch fresh bytes and would have happened anyway."
+            )
         rows.append(
             f"<div class='lv' title='{escape(tip)}'>"
             f"<div class='lr'><span class='rk'>&#10003;</span>"
@@ -1747,7 +1762,8 @@ def _measured_rows(d: Dict[str, Any]) -> List[str]:
             # identical to the largest simulated one directly above it. The dollar figure and
             # the MEASURED tag carry the row; nothing is implied by length.
             f"<div class='lm'><span>{turns} turn{'' if turns == 1 else 's'}, "
-            f"{_f(toks)} tokens</span><span class='NONE'>MEASURED</span></div></div>"
+            f"{_f(toks)} tokens{reread}</span>"
+            f"<span class='NONE'>MEASURED</span></div></div>"
         )
     return rows
 

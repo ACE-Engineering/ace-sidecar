@@ -468,3 +468,118 @@ def test_nothing_enabled_costs_the_turn_nothing(store):
     asyncio.run(main())
     assert store.lever_summary()["rows"] == 0
     assert store.summary()["turns"] == 1, "accounting still happened"
+
+
+# -- the re-read instrument -----------------------------------------------------------------
+
+
+def read_body(calls):
+    """`calls` is [(file_path, offset, result_size)] in order."""
+    messages = [{"role": "user", "content": "go"}]
+    for i, (path, off, size) in enumerate(calls):
+        messages += [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": f"tu_{i}", "name": "Read",
+                 "input": {"file_path": path, "offset": off}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": f"tu_{i}", "content": "x" * size}]},
+        ]
+    return {"model": "claude-sonnet-5", "messages": messages}
+
+
+def truncating_edits(session, anchors):
+    return [
+        L.Edit(turn_index=t, call_index=c, kind="truncate", reason="big", keep_bytes=2048)
+        for t, c, x in session.iter_calls()
+        if x.result_bytes >= 4096 and (t, c) in anchors
+    ]
+
+
+def test_a_result_never_returned_to_is_not_a_reread():
+    from ace.sidecar.levers.shadow import observe_revisits
+    b = read_body([("/a.py", 0, 200_000), ("/b.py", 0, 200_000)])
+    s, anchors = body_to_session(b)
+    rv = observe_revisits(b, truncating_edits(s, anchors), anchors)
+    assert rv.candidates == 2
+    assert rv.revisited == 0
+    assert rv.reread_rate == 0.0
+
+
+def test_pagination_is_not_counted_as_a_reread():
+    """A later Read at a HIGHER offset fetches fresh bytes from the file. It would have
+    happened whether or not the earlier result was trimmed, so counting it as damage would
+    condemn the lever for behaviour it did not cause. This distinction moved the observed
+    rate on the reference corpus from 51.4% to 17.2% — across the break-even line."""
+    from ace.sidecar.levers.shadow import observe_revisits
+    b = read_body([("/a.py", 0, 200_000), ("/a.py", 500, 9_000)])
+    s, anchors = body_to_session(b)
+    rv = observe_revisits(b, truncating_edits(s, anchors), anchors)
+    assert rv.revisited >= 1
+    assert rv.paginated >= 1
+    assert rv.same_or_earlier == 0
+    assert rv.reread_rate == 0.0
+
+
+def test_returning_to_the_same_region_is_a_reread():
+    from ace.sidecar.levers.shadow import observe_revisits
+    b = read_body([("/a.py", 0, 200_000), ("/a.py", 0, 200_000)])
+    s, anchors = body_to_session(b)
+    rv = observe_revisits(b, truncating_edits(s, anchors), anchors)
+    assert rv.same_or_earlier >= 1
+    assert rv.reread_rate > 0.0
+
+
+def test_returning_to_an_earlier_region_counts_against_the_lever():
+    from ace.sidecar.levers.shadow import observe_revisits
+    b = read_body([("/a.py", 800, 200_000), ("/a.py", 0, 200_000)])
+    s, anchors = body_to_session(b)
+    rv = observe_revisits(b, truncating_edits(s, anchors), anchors)
+    assert rv.same_or_earlier >= 1
+
+
+def test_the_reread_rate_is_persisted_and_aggregated(store):
+    """Without a row it is an anecdote. The rate is the input that decides whether the
+    saving above it is worth anything."""
+    class Trunc:
+        id, label = "tail_truncation", "Cap oversized tool results"
+        risk, requires_content = L.RISK_LOW, False
+        def propose(self, session, ctx):
+            return L.Proposal(self.id, tuple(
+                L.Edit(turn_index=t, call_index=c, kind="truncate", reason="big",
+                       keep_bytes=2048)
+                for t, c, x in session.iter_calls() if x.result_bytes >= 4096))
+
+    app, _ = make_app(store, config={"levers": {"tail_truncation": "shadow"}},
+                      levers=(Trunc,))
+
+    async def main():
+        # first read is big and later returned to at the same offset -> one true re-read
+        await drive(app, payload=read_body([("/a.py", 0, 200_000), ("/a.py", 0, 9_000)]))
+        await settle(store, 1)
+
+    asyncio.run(main())
+    row = store.lever_summary()["by_lever"][0]
+    assert row["revisit_candidates"] >= 1
+    assert row["revisits"] >= 1, "the return to the same region must be recorded"
+
+
+def test_an_old_database_gains_the_columns(tmp_path):
+    """CREATE TABLE IF NOT EXISTS keeps the OLD shape, so a schema change alone never reaches
+    a developer who has been running the sidecar."""
+    import sqlite3
+    path = str(tmp_path / "old.db")
+    db = sqlite3.connect(path)
+    db.execute(
+        "CREATE TABLE lever_turns (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,"
+        " request_id TEXT, session_id TEXT, lever TEXT NOT NULL, mode TEXT, model TEXT,"
+        " baseline_tokens INTEGER, counterfactual_tokens INTEGER, removed_tokens INTEGER,"
+        " from_cache_write INTEGER, from_input INTEGER, from_cache_read INTEGER, usd REAL,"
+        " priced INTEGER, prefix_safe INTEGER, edits_applied INTEGER, diagnostics TEXT,"
+        " note TEXT)")
+    db.commit(); db.close()
+
+    s = LocalStore(path)   # must migrate, not raise
+    cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(lever_turns)")}
+    assert {"revisit_candidates", "revisits_observed", "revisits_paginated",
+            "revisits_same_earlier"} <= cols
+    assert s.lever_summary()["rows"] == 0
