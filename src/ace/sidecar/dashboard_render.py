@@ -13,6 +13,8 @@ Every lever switch renders **disabled** — Phase 0 ships no levers.
 
 from __future__ import annotations
 
+import json
+
 import datetime
 import os
 from html import escape
@@ -366,6 +368,7 @@ def _st(
     delta: str = "",
     dcls: str = "",
     title: str = "",
+    ref: Any = None,
 ) -> str:
     """One stat tile: mono label, SANS-bold figure, mono delta + meta beneath.
 
@@ -384,9 +387,49 @@ def _st(
         foot = f"<div class='n'>{d}{escape(sep + note) if note else ''}</div>"
     tip = f" title='{escape(title)}'" if title else ""
     hint = " calc" if title else ""
+    # The impact slot is always emitted and always empty. The mode toggle fills it from data
+    # already on the page; rendering it server-side per mode would mean three copies of every
+    # tile and a reload to switch between them.
+    slot = f"<div class='imp' data-metric='{escape(k)}'></div>"
     return (
-        f"<div class='st{hint}'{tip}><div class='k'>{escape(k)}</div>"
-        f"<div class='v {cls}'>{v}</div>{foot}</div>"
+        f"<div class='st{hint}' data-k='{escape(k)}'{tip}><div class='k'>{escape(k)}</div>"
+        f"<div class='v {cls}'>{v}</div>{foot}{_ref_line(ref)}{slot}</div>"
+    )
+
+
+def _ref_line(ref: Any) -> str:
+    """The grounded comparison beneath a figure, or an explicit statement that there is none.
+
+    A benchmark with no provenance is worse than no benchmark: a reader cannot tell an
+    invented number from a measured one, and the invented one stops them asking. So the kind
+    is always on the badge, and the receipt is always in the tooltip.
+    """
+    if ref is None:
+        return ""
+    kind = getattr(ref, "kind", "none")
+    note = getattr(ref, "note", "") or ""
+    src = getattr(ref, "source", "") or ""
+    as_of = getattr(ref, "as_of", "") or ""
+    tip = note + (f"\n\nSource: {src}" if src else "") + (f" ({as_of})" if as_of else "")
+    if kind == "none" or getattr(ref, "value", None) is None:
+        return (
+            f"<div class='ref none' title='{escape(tip)}'>"
+            f"<span class='rk'>NO REF</span>"
+            f"<span class='rv'>{escape(getattr(ref, 'label', '') or 'none established')}</span>"
+            f"</div>"
+        )
+    val = getattr(ref, "value", 0.0)
+    unit = getattr(ref, "unit", "") or ""
+    shown = f"${val:,.4g}" if unit == "$" else (
+        f"{val:,.0f}" if abs(val) >= 100 else f"{val:,.3g}"
+    )
+    if unit and unit != "$":
+        shown = f"{shown}{unit if unit != 'tok' else ''}"
+    return (
+        f"<div class='ref {escape(kind)}' title='{escape(tip)}'>"
+        f"<span class='rk'>{escape(kind.upper())}</span>"
+        f"<span class='rv'>{escape(getattr(ref, 'label', ''))} {escape(shown)}</span>"
+        f"</div>"
     )
 
 
@@ -714,7 +757,195 @@ def _activity_svg(daily: List[Dict[str, Any]], commits: bool) -> str:
     )
 
 
-def _fleet(f: Optional[Dict[str, Any]]) -> str:
+def _refs(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Grounded reference points, or an empty map. Never raises.
+
+    A failure here costs the comparison column and leaves every measured figure on the page
+    exactly as it was — the same posture the lever rail takes.
+    """
+    try:
+        from ace.sidecar.benchmarks import references
+
+        return references(d)
+    except Exception:
+        log.warning("[benchmarks] reference lookup failed", exc_info=True)
+        return {}
+
+
+_MODE_CSS = """
+.ref{display:flex;gap:6px;align-items:center;margin-top:5px;font:10px/1.4 ui-monospace,monospace}
+.ref .rk{padding:1px 5px;border-radius:3px;letter-spacing:.04em;font-size:9px;
+  background:#14301f;color:#4ade80;border:1px solid #1e4d33}
+.ref.peer .rk{background:#1b2a44;color:#7dabf8;border-color:#26406b}
+.ref.published .rk{background:#2c2440;color:#c4a3f5;border-color:#42356b}
+.ref.measured .rk{background:#14301f;color:#4ade80;border-color:#1e4d33}
+.ref.none .rk{background:#2a2320;color:#d0a172;border-color:#4a3a2c}
+.ref .rv{color:#7d8590;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ref.none .rv{color:#6b6560;font-style:italic}
+.imp{display:none}
+body.m-shadow .imp.on,body.m-prod .imp.on{display:flex;gap:6px;align-items:center;
+  margin-top:5px;font:10px/1.4 ui-monospace,monospace;cursor:help}
+.imp .ik{padding:1px 5px;border-radius:3px;font-size:9px;letter-spacing:.04em;
+  background:#0f2e3a;color:#5ec8e5;border:1px solid #174657}
+body.m-prod .imp .ik{background:#3a2216;color:#f0a868;border-color:#5c3820}
+.imp .iv{color:#5ec8e5}
+body.m-prod .imp .iv{color:#f0a868}
+.modebar{display:flex;gap:0;margin:4px 0 2px;border:1px solid #23282e;border-radius:5px;
+  overflow:hidden;background:#0d1013}
+.modebar button{flex:1;padding:5px 0;background:transparent;border:0;cursor:pointer;
+  color:#6e7681;font:10px/1 ui-monospace,monospace;letter-spacing:.06em}
+.modebar button.on{background:#14301f;color:#4ade80}
+.modebar button.on[data-mode=prod]{background:#3a2216;color:#f0a868}
+.modebar button:hover:not(.on){color:#adbac7;background:#12161a}
+.modenote{font:10px/1.5 ui-monospace,monospace;color:#6e7681;margin-top:5px}
+"""
+
+
+def _mode_toggle(d: Dict[str, Any]) -> str:
+    """The off / shadow / prod control, and the data the page needs to answer it.
+
+    Client-side on purpose. Switching mode does not re-run anything and does not touch the
+    sidecar's real configuration — it re-labels figures the page is already showing. The
+    alternative, a server round trip per mode, would imply the mode had been *applied*, which
+    is exactly the confusion this control has to avoid: reading a projection and enabling a
+    lever are different acts.
+
+    That is why ``prod`` here still only previews. A lever is enabled in ``~/.ace/config.json``
+    and nowhere else; a dashboard that could switch one on from a hover would be a dashboard
+    that can silently start rewriting a developer's prompts.
+    """
+    impact = _mode_impact(d)
+    payload = json.dumps(impact, separators=(",", ":"))
+    return (
+        "<div class='ctl'><div class='h'>Skill mode &mdash; preview</div>"
+        "<div class='modebar' id='modebar'>"
+        "<button data-mode='off' class='on'>OFF</button>"
+        "<button data-mode='shadow'>SHADOW</button>"
+        "<button data-mode='prod'>PROD</button></div>"
+        "<div class='modenote' id='modenote'>Showing measured figures. Nothing is applied.</div>"
+        f"<script id='ace-impact' type='application/json'>{payload}</script>"
+        "</div>"
+    )
+
+
+def _mode_js() -> str:
+    """Wire the toggle to the impact slots. No network, no state, no mutation of the sidecar.
+
+    Newlines in the hover text are assembled with ``String.fromCharCode(10)`` rather than an
+    escape. This JS is a Python string inside a Python patch, and a ``backslash-n`` written
+    there survives one level of quoting and not two — it arrived in the page as a real line
+    break inside a JS string literal, which is a syntax error and silently killed the whole
+    control. Building the character removes the class of bug rather than the instance.
+    """
+    return """<script>
+(function(){
+  var el=document.getElementById('ace-impact'); if(!el) return;
+  var D={}; try{ D=JSON.parse(el.textContent)||{}; }catch(e){ return; }
+  var NL=String.fromCharCode(10);
+  var M=D.metrics||{}, S=D.sources||[];
+  var usd=function(n){var a=Math.abs(n);return (n<0?'-':'')+'$'+a.toLocaleString(undefined,
+      {minimumFractionDigits:a<1?4:2,maximumFractionDigits:a<1?4:2});};
+  // The attribution shown on hover. Levers are scored ALONE and overlap, so the headline is
+  // the single best contributor, never a sum -- the text says so explicitly.
+  var why;
+  if(S.length){
+    var lines=S.map(function(x){
+      return '  '+(x.kind==='measured'?'[measured]  ':'[simulated] ')+x.lever+
+             '   '+usd(x.usd)+'   ('+(x.share*100).toFixed(2)+'% of billed)'+
+             (x.risk?('   risk '+x.risk):'');});
+    why=['Attributed to '+S.length+' skill source'+(S.length>1?'s':'')+', ranked:','']
+        .concat(lines)
+        .concat(['',
+          'Headline uses the single LARGEST contributor, not the sum: each lever is',
+          'scored alone, so their shares overlap and adding them would promise more',
+          'than the levers could jointly deliver.','',
+          '[simulated] byte-turn estimate over your transcripts.',
+          '[measured]  ran for real on proxied turns, exactly counted.']).join(NL);
+  } else { why='No skill is currently enabled, so nothing is attributed.'; }
+  var notes={
+    off:'Showing measured figures. Nothing is applied.',
+    shadow:'Projected: what the enabled skills would have saved. Prompts unchanged - shadow never edits a request.',
+    prod:'Preview only. Enabling a lever happens in ~/.ace/config.json, never from this page.'};
+  function apply(mode){
+    document.body.classList.remove('m-shadow','m-prod');
+    if(mode!=='off') document.body.classList.add('m-'+mode);
+    document.querySelectorAll('#modebar button').forEach(function(b){
+      b.classList.toggle('on', b.dataset.mode===mode);});
+    var n=document.getElementById('modenote'); if(n) n.textContent=notes[mode]||'';
+    document.querySelectorAll('.imp').forEach(function(slot){
+      var m=M[slot.dataset.metric];
+      if(!m||mode==='off'||!m.delta){ slot.className='imp'; slot.innerHTML=''; return; }
+      var pct=m.base? (m.delta/m.base*100):0;
+      slot.className='imp on'; slot.title=why;
+      slot.innerHTML="<span class='ik'>"+(mode==='prod'?'WOULD APPLY':'SHADOW')+"</span>"+
+        "<span class='iv'>"+usd(m.delta)+"  ("+pct.toFixed(1)+"%)</span>";
+    });
+  }
+  document.querySelectorAll('#modebar button').forEach(function(b){
+    b.addEventListener('click',function(){apply(b.dataset.mode);});});
+  apply('off');
+})();
+</script>"""
+
+
+def _mode_impact(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-metric projected impact of the enabled skills, with the sources that produce it.
+
+    Two provenances, never merged. ``simulated`` rows come from ``scorecards.standalone`` —
+    a byte-turn estimate of what a lever would be worth. ``measured`` rows come from levers
+    that actually ran on proxied turns. The toggle labels each, because a reader deciding
+    whether to switch a lever on needs to know which of the two they are looking at.
+
+    Levers are scored ALONE, so their shares overlap and the totals here are deliberately
+    capped at the largest contributor rather than summed. Summing them would promise more than
+    the levers could jointly deliver — the same discipline the ledger and the rail already
+    keep.
+    """
+    fleet = d.get("fleet") or {}
+    billed = float(fleet.get("cost") or 0.0)
+    turns = float(fleet.get("handbacks") or 0.0)
+    sessions = float(fleet.get("sessions") or 0.0)
+    prompt = float((fleet.get("tokens") or {}).get("prompt") or 0.0)
+
+    sources = []
+    for r in (d.get("scorecards") or {}).get("standalone") or []:
+        usd = float(r.get("usd") or 0.0)
+        if usd > 0:
+            sources.append({
+                "lever": r.get("label") or "?", "usd": usd,
+                "share": float(r.get("share") or 0.0), "kind": "simulated",
+                "risk": (r.get("risk") or "").replace("*", ""),
+            })
+    for r in ((d.get("levers") or {}).get("measured") or {}).get("by_lever") or []:
+        usd = float(r.get("usd") or 0.0)
+        if usd > 0:
+            sources.append({
+                "lever": r.get("lever") or "?", "usd": usd,
+                "share": (usd / billed) if billed else 0.0, "kind": "measured",
+                "risk": "",
+            })
+    sources.sort(key=lambda x: -x["usd"])
+
+    # NOT a sum. See the docstring.
+    best = sources[0]["usd"] if sources else 0.0
+    return {
+        "billed": billed, "turns": turns, "sessions": sessions, "prompt": prompt,
+        "best_usd": best, "sources": sources,
+        "metrics": {
+            "list_price_cost": {"kind": "usd", "delta": -best, "base": billed},
+            "cost_per_turn [3]": {
+                "kind": "usd", "delta": -(best / turns) if turns else 0.0,
+                "base": (billed / turns) if turns else 0.0,
+            },
+            "cost_per_session [6]": {
+                "kind": "usd", "delta": -(best / sessions) if sessions else 0.0,
+                "base": (billed / sessions) if sessions else 0.0,
+            },
+        },
+    }
+
+
+def _fleet(f: Optional[Dict[str, Any]], refs: Optional[Dict[str, Any]] = None) -> str:
     """§ 01 — the eleven fleet metrics from docs/22 §0, on this machine's transcripts.
 
     Rendered even when empty: it is a rail destination, and a section that disappears would
@@ -736,6 +967,9 @@ def _fleet(f: Optional[Dict[str, Any]]) -> str:
             "these figures fill in.</div></div></div>"
         )
 
+    refs = refs or {}
+    R = lambda key: refs.get(key)          # noqa: E731 - one-liner used at every tile
+
     tok = f.get("tokens") or {}
     cm = f.get("commits") or {}
     tr = f.get("trend") or {}
@@ -755,19 +989,22 @@ def _fleet(f: Optional[Dict[str, Any]]) -> str:
                     _f(prompt),
                     "prompt tokens",
                     delta=f"{prompt/out:,.0f}:1 in:out" if out else "",
+                    ref=R("tokens_in [1]"),
                 ),
-                _st("tokens_out [1]", _f(out), "generated by the model"),
+                _st("tokens_out [1]", _f(out), "generated by the model", ref=R("tokens_out [1]")),
                 _st(
                     "api_requests [2]",
                     _f(f.get("requests")),
                     "developer sessions",
                     delta=_f(f.get("sessions")),
+                    ref=R("api_requests [2]"),
                 ),
                 _st(
                     "conversation_turns [3]",
                     _f(f.get("handbacks")),
                     "API requests each",
                     delta=f"{f.get('requests_per_handback') or 0:,.1f}x",
+                    ref=R("conversation_turns [3]"),
                 ),
                 _st(
                     "cost_per_turn [3]",
@@ -779,6 +1016,7 @@ def _fleet(f: Optional[Dict[str, Any]]) -> str:
                         "so this is what one instruction cost — across all the API "
                         "requests it took. Rates: see the rate card under § 02."
                     ),
+                    ref=R("cost_per_turn [3]"),
                 ),
             ]
         )
@@ -804,12 +1042,14 @@ def _fleet(f: Optional[Dict[str, Any]]) -> str:
                         "+ output/1e6 x output rate\n"
                         "Same total as § 02. Rates: see the rate card under § 02."
                     ),
+                    ref=R("list_price_cost"),
                 ),
                 _st(
                     "cost_per_session [6]",
                     _usd(cps.get("mean")),
                     "median",
                     delta=_usd(cps.get("p50")),
+                    ref=R("cost_per_session [6]"),
                 ),
                 _st(
                     "commits_per_session [9]",
@@ -1820,14 +2060,7 @@ def _rail(d: Dict[str, Any]) -> str:
 <div class='s'>local sidecar</div></div>
 <h4>Dashboards</h4>{nav}
 <h4>Sidecar</h4>
-<div class='ctl'><div class='h'>Mode</div>
-  <div class='sw' title='The only mode this release has: every request is relayed
- byte-for-byte and only its usage is recorded.'>observe<span class='pill on'>ACTIVE</span></div>
-  <div class='sw dis' title='Phase 1 — would score a rewritten prompt alongside the real one
- without sending it.'>shadow<span class='pill soon'>PHASE 1</span></div>
-  <div class='sw dis' title='Phase 2 — would apply the levers to the request actually
- sent.'>enforce<span class='pill soon'>PHASE 2</span></div>
-</div>
+{_mode_toggle(d)}
 <div class='ctl'><div class='h'>Levers(PHASE 1) &mdash; headroom on your data</div>{levers}
   <div class='note-s'>{_lever_note(d)}</div>
 </div>
@@ -1961,7 +2194,7 @@ def render(d: Dict[str, Any]) -> str:
 
     # § 01 — fleet metrics. First because it answers "what happened" before the page moves
     # on to "what it cost" and "what to do about it".
-    b.append(_fleet(d.get("fleet")))
+    b.append(_fleet(d.get("fleet"), _refs(d)))
 
     peak = h.get("peak_context") or 0
     # § 02 — spend
@@ -2444,7 +2677,7 @@ def render(d: Dict[str, Any]) -> str:
         f"<meta http-equiv='refresh' content='{REFRESH_SECONDS}'>"
         "<title>ACE — Local Coding Dashboard</title>"
         + FAVICON_LINK
-        + f"<style>{_CSS}{_nav_css()}</style></head><body>"
+        + f"<style>{_CSS}{_nav_css()}{_MODE_CSS}</style></head><body>"
         + _rail(d)
         + "<div class='main'>"
         + "".join(b)
@@ -2713,6 +2946,6 @@ async function installSkill(skillId, btn) {
   }
 }
 """
-        + "</script></body></html>"
+        + "</script>" + _mode_js() + "</body></html>"
     )
 
