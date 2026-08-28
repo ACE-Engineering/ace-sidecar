@@ -1718,16 +1718,12 @@ def _measured_rows(d: Dict[str, Any]) -> List[str]:
         return []
 
     labels = {i["id"]: (i.get("label") or i["id"]) for i in (lv.get("installed") or [])}
-    # Scaled within the measured group. Sharing the simulated rail's scale would imply the
-    # two are commensurable, which is the whole thing this page must not say.
-    top = max((abs(r.get("usd") or 0.0) for r in measured), default=0.0)
     rows = []
     for r in sorted(measured, key=lambda x: -(x.get("usd") or 0.0)):
         usd = r.get("usd") or 0.0
         turns = r.get("turns") or 0
         toks = r.get("removed_tokens") or 0
         unpriced = r.get("unpriced_turns") or 0
-        w = (abs(usd) / top * 100.0) if top > 0 else 0.0
         # A lever can measure NEGATIVE: an edit to already-cached content pays a re-write
         # premium the saving has to earn back. Showing that is the point of measuring.
         z = "" if usd > 0 else " z"
@@ -1744,7 +1740,12 @@ def _measured_rows(d: Dict[str, Any]) -> List[str]:
             f"<div class='lr'><span class='rk'>&#10003;</span>"
             f"<span class='ln'>{escape(labels.get(r['lever'], r['lever']))}</span>"
             f"<span class='lu{z}'>{_usd(usd)}</span></div>"
-            f"<div class='lb{z}'><i style='width:{w:.1f}%'></i></div>"
+            # No bar, deliberately. A bar has to be scaled against something, and both
+            # choices are wrong: scaled against the simulated rows it says a measured $0.75
+            # is a 240th of a simulated $179 (different claims, not a ratio); scaled within
+            # the measured group it drew the largest measured lever full-width, visually
+            # identical to the largest simulated one directly above it. The dollar figure and
+            # the MEASURED tag carry the row; nothing is implied by length.
             f"<div class='lm'><span>{turns} turn{'' if turns == 1 else 's'}, "
             f"{_f(toks)} tokens</span><span class='NONE'>MEASURED</span></div></div>"
         )
