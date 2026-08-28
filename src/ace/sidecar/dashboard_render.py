@@ -807,6 +807,87 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"</div>"
         )
 
+    breakdown_rows = []
+    # Agent breakdown rows
+    by_agent = qm.get("by_agent") or {}
+    for ak, a_info in by_agent.items():
+        a_score = a_info.get("quality_score", 100)
+        a_grade = a_info.get("grade", "A")
+        a_v_rate = a_info.get("verification_rate_pct", 100.0)
+        a_fsr = a_info.get("first_pass_success_rate_pct", 100.0)
+        a_thrash = a_info.get("thrashed_files_count", 0)
+        a_rec = a_info.get("avg_error_recovery_turns", 1.0)
+        a_sess = a_info.get("sessions", 0)
+        badge_style = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if ak == "antigravity"
+            else "color:var(--blue);border-color:#1e355b;background:#0d1c33"
+        )
+        score_badge = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if a_score >= 80
+            else (
+                "color:var(--gold);border-color:#3d3014;background:#241D0E"
+                if a_score >= 60
+                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
+            )
+        )
+        breakdown_rows.append(
+            f"<tr>"
+            f"<td><span class='pill' style='{badge_style};font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
+            f"<td><span class='pill' style='{score_badge};font-weight:700;'>{a_score} ({a_grade})</span></td>"
+            f"<td class='num'><b>{a_v_rate}%</b></td>"
+            f"<td class='num'><b>{a_fsr}%</b></td>"
+            f"<td class='num'>{'<span style=\"color:var(--gold)\">' + str(a_thrash) + '</span>' if a_thrash > 0 else '0'}</td>"
+            f"<td class='num'>{a_rec} turns</td>"
+            f"<td class='num' style='color:var(--ink-3);'>{a_sess}</td>"
+            f"</tr>"
+        )
+
+    # Model breakdown rows
+    by_model = qm.get("by_model") or []
+    for m_info in by_model:
+        m_name = m_info.get("model", "unknown")
+        m_score = m_info.get("quality_score", 100)
+        m_grade = m_info.get("grade", "A")
+        m_v_rate = m_info.get("verification_rate_pct", 100.0)
+        m_fsr = m_info.get("first_pass_success_rate_pct", 100.0)
+        m_thrash = m_info.get("thrashed_files_count", 0)
+        m_rec = m_info.get("avg_error_recovery_turns", 1.0)
+        m_sess = m_info.get("sessions", 0)
+        score_badge = (
+            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            if m_score >= 80
+            else (
+                "color:var(--gold);border-color:#3d3014;background:#241D0E"
+                if m_score >= 60
+                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
+            )
+        )
+        breakdown_rows.append(
+            f"<tr>"
+            f"<td class='m'><code style='color:var(--ink);'>{escape(m_name)}</code></td>"
+            f"<td><span class='pill' style='{score_badge};font-weight:700;'>{m_score} ({m_grade})</span></td>"
+            f"<td class='num'>{m_v_rate}%</td>"
+            f"<td class='num'>{m_fsr}%</td>"
+            f"<td class='num'>{'<span style=\"color:var(--gold)\">' + str(m_thrash) + '</span>' if m_thrash > 0 else '0'}</td>"
+            f"<td class='num'>{m_rec} turns</td>"
+            f"<td class='num' style='color:var(--ink-3);'>{m_sess}</td>"
+            f"</tr>"
+        )
+
+    matrix_table = ""
+    if breakdown_rows:
+        matrix_table = (
+            f"<div style='margin-top:14px;'>"
+            f"<table style='margin-top:6px;'>"
+            f"<tr><th>engine / model</th><th>score</th><th class='num'>verification</th><th class='num'>first-pass success</th>"
+            f"<th class='num'>thrash files</th><th class='num'>healing turns</th><th class='num'>sessions</th></tr>"
+            f"{''.join(breakdown_rows)}"
+            f"</table>"
+            f"</div>"
+        )
+
     return (
         f"<div class='grid'>{''.join(tiles)}</div>"
         f"<div class='pan' style='margin-top:14px;'>"
@@ -819,7 +900,8 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         f"<div><b style='color:var(--ink);'>{redundant_reads}</b> redundant duplicate file reads</div>"
         f"</div>"
         f"{thrash_html}"
-        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. High verification rates and low thrash indicate clean first-pass execution without prompt churn.</div>"
+        f"{matrix_table}"
+        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. Correlates cost against first-pass tool correctness and test diligence.</div>"
         f"</div></div>"
     )
 

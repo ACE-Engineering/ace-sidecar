@@ -263,8 +263,8 @@ def test_quality_in_payload_and_prometheus() -> None:
     # Prometheus export check
     prom_text = format_prometheus_metrics(payload)
     assert "ace_quality_score" in prom_text
-    assert "ace_quality_verification_rate 1.0" in prom_text
-    assert "ace_quality_first_pass_success_rate 1.0" in prom_text
+    assert 'ace_quality_verification_rate{agent="all"} 1.0' in prom_text
+    assert 'ace_quality_first_pass_success_rate{agent="all"} 1.0' in prom_text
     assert "ace_quality_thrashed_files_total 0" in prom_text
     assert "ace_quality_redundant_reads_total 0" in prom_text
 
@@ -274,3 +274,77 @@ def test_quality_in_payload_and_prometheus() -> None:
     assert "quality_score" in html
     assert "verification_rate" in html
     assert "first_pass_success" in html
+
+
+def test_quality_metrics_by_agent_and_model() -> None:
+    sess: List[Dict[str, Any]] = [
+        # Session 1: Claude using Sonnet - verified, high quality
+        {
+            "session": "s1",
+            "agent_type": "claude",
+            "cwds": ["/test"],
+            "turns": [
+                {
+                    "model": "claude-sonnet-4-6",
+                    "input_tokens": 1000,
+                    "output_tokens": 200,
+                    "cache_read_input_tokens": 800,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": [
+                        {"name": "Edit", "raw_target": "src/a.py", "is_edit": True, "is_src_file": True},
+                        {"name": "Bash", "command": "pytest", "is_test_run": True, "is_error": False},
+                    ],
+                }
+            ],
+            "events": [],
+        },
+        # Session 2: Antigravity using Gemini Flash - unverified, error
+        {
+            "session": "s2",
+            "agent_type": "antigravity",
+            "cwds": ["/test"],
+            "turns": [
+                {
+                    "model": "gemini-3.6-flash",
+                    "input_tokens": 500,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 300,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": [
+                        {"name": "write_to_file", "raw_target": "src/b.py", "is_edit": True, "is_src_file": True, "is_error": True},
+                    ],
+                }
+            ],
+            "events": [],
+        },
+    ]
+
+    qm = quality_metrics(sess)
+    assert "by_agent" in qm
+    assert "claude" in qm["by_agent"]
+    assert "antigravity" in qm["by_agent"]
+
+    claude_q = qm["by_agent"]["claude"]
+    assert claude_q["verification_rate_pct"] == 100.0
+    assert claude_q["quality_score"] >= 85
+
+    agy_q = qm["by_agent"]["antigravity"]
+    assert agy_q["verification_rate_pct"] == 0.0
+    assert agy_q["first_pass_success_rate_pct"] == 0.0
+
+    assert "by_model" in qm
+    models = [m["model"] for m in qm["by_model"]]
+    assert "claude-sonnet-4-6" in models
+    assert "gemini-3.6-flash" in models
+
+    # Dashboard render with comparative table
+    payload = _build_payload(sess, capture=None, range_key="all", agent="all", store_path=None)
+    html = render(payload)
+    assert "Claude Code" in html or "claude" in html
+    assert "claude-sonnet-4-6" in html
+    assert "gemini-3.6-flash" in html
+    assert "engine / model" in html

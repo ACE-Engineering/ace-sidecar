@@ -1982,18 +1982,7 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ------------------------------------------------- code quality & reliability metrics
 
 
-def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Calculates unified code quality, verification hygiene, and reliability metrics.
-
-    Evaluates across all agent sessions:
-    - Verification Hygiene: share of editing sessions running test suites / linters.
-    - Edit Thrash / Rework: files modified 3+ times within a single session.
-    - First-Pass Success Rate (FSR): share of tool executions with zero errors on initial run.
-    - Error Healing Latency: average conversation turns to resolve tool execution errors.
-    - Redundant File Reads: consecutive duplicate view/reads of unchanged files.
-    - Test-to-Code Ratio: ratio of test file edits vs source file edits.
-    - Composite Score: 0-100 overall quality and reliability index.
-    """
+def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     total_sessions = len(sess)
     if not total_sessions:
         return {
@@ -2174,6 +2163,67 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "sessions_with_edits": sessions_with_edits,
         "sessions_with_tests": sessions_with_tests,
     }
+
+
+def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculates unified code quality, verification hygiene, and reliability metrics.
+
+    Includes top-line metrics along with breakdowns:
+    - by_agent: Quality scores partitioned per agent engine (Claude Code, Antigravity, Codex).
+    - by_model: Quality scores partitioned per LLM model.
+    """
+    overall = _calc_quality_block(sess)
+    if not sess:
+        overall["by_agent"] = {}
+        overall["by_model"] = []
+        return overall
+
+    # Group by agent
+    by_agent: Dict[str, Any] = {}
+    agent_groups: Dict[str, List[Dict[str, Any]]] = {}
+    for s in sess:
+        ak = s.get("agent_type") or AGENT_CLAUDE
+        agent_groups.setdefault(ak, []).append(s)
+
+    for ak, a_sess in agent_groups.items():
+        block = _calc_quality_block(a_sess)
+        by_agent[ak] = {
+            "agent": ak,
+            "label": AGENTS.get(ak, ak.capitalize()),
+            "sessions": len(a_sess),
+            **block,
+        }
+
+    # Group by model
+    model_sessions: Dict[str, List[Dict[str, Any]]] = {}
+    for s in sess:
+        models_in_s = set(t.get("model") for t in s.get("turns", []) if t.get("model"))
+        for m in models_in_s:
+            projected_turns = [t for t in s.get("turns", []) if t.get("model") == m]
+            if projected_turns:
+                model_sessions.setdefault(m, []).append(
+                    {
+                        "session": s.get("session"),
+                        "agent_type": s.get("agent_type"),
+                        "turns": projected_turns,
+                        "events": s.get("events", []),
+                    }
+                )
+
+    by_model: List[Dict[str, Any]] = []
+    for m_name, m_sess in sorted(model_sessions.items(), key=lambda kv: -len(kv[1])):
+        block = _calc_quality_block(m_sess)
+        by_model.append(
+            {
+                "model": m_name,
+                "sessions": len(m_sess),
+                **block,
+            }
+        )
+
+    overall["by_agent"] = by_agent
+    overall["by_model"] = by_model
+    return overall
 
 
 # ------------------------------------------------- time budget (docs/analysis_docs §1 and §2)
@@ -3127,15 +3177,24 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     qm = d.get("quality") or {}
     lines.append("# HELP ace_quality_score Composite code quality and verification score (0-100).")
     lines.append("# TYPE ace_quality_score gauge")
-    lines.append(f'ace_quality_score {qm.get("quality_score", 100)}')
+    lines.append(f'ace_quality_score{{agent="all"}} {qm.get("quality_score", 100)}')
+    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+        lines.append(f'ace_quality_score{{agent="{agent_id}"}} {q_info.get("quality_score", 100)}')
+    for m_info in (qm.get("by_model") or []):
+        m_name = m_info.get("model", "unknown")
+        lines.append(f'ace_quality_score{{model="{m_name}"}} {m_info.get("quality_score", 100)}')
 
     lines.append("# HELP ace_quality_verification_rate Share of edited sessions that ran automated tests or linters.")
     lines.append("# TYPE ace_quality_verification_rate gauge")
-    lines.append(f'ace_quality_verification_rate {qm.get("verification_rate", 1.0)}')
+    lines.append(f'ace_quality_verification_rate{{agent="all"}} {qm.get("verification_rate", 1.0)}')
+    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+        lines.append(f'ace_quality_verification_rate{{agent="{agent_id}"}} {q_info.get("verification_rate", 1.0)}')
 
     lines.append("# HELP ace_quality_first_pass_success_rate Share of tool calls that succeeded on first pass.")
     lines.append("# TYPE ace_quality_first_pass_success_rate gauge")
-    lines.append(f'ace_quality_first_pass_success_rate {qm.get("first_pass_success_rate", 1.0)}')
+    lines.append(f'ace_quality_first_pass_success_rate{{agent="all"}} {qm.get("first_pass_success_rate", 1.0)}')
+    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+        lines.append(f'ace_quality_first_pass_success_rate{{agent="{agent_id}"}} {q_info.get("first_pass_success_rate", 1.0)}')
 
     lines.append("# HELP ace_quality_tool_error_rate Share of tool executions that returned errors.")
     lines.append("# TYPE ace_quality_tool_error_rate gauge")
