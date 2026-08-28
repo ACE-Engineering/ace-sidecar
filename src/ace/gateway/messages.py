@@ -538,6 +538,46 @@ async def _relay_stream(
     )
 
 
+class _LocalRequestLog:
+    """The telemetry row shape, for a sidecar that has no telemetry package.
+
+    ``ace.observability.telemetry.RequestLog`` is the cloud gateway's row and does not exist
+    in this distribution — the sidecar was extracted from that tree without it. The import
+    was unconditional, it raised ``ModuleNotFoundError`` on **every** turn, and the caller
+    catches ``Exception`` around accounting so that nothing must ever cost a developer their
+    response. The result was silent: ``~/.ace/telemetry.db`` stayed empty, ``store.summary()``
+    returned zeros, and the dashboard's live panel reported no spend on a sidecar that was
+    relaying traffic correctly the whole time.
+
+    A permissive attribute bag rather than a fixed dataclass, because the consumer
+    (``LocalStore.record_log``) reads by ``getattr`` with defaults, and pinning a field list
+    here would create a second definition to keep in step with the cloud one.
+    """
+
+    __slots__ = ("__dict__",)
+
+    def __init__(self, **fields: Any) -> None:
+        self.__dict__.update(fields)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_LocalRequestLog({self.__dict__!r})"
+
+
+def _request_log_class():
+    """The cloud gateway's ``RequestLog`` when this tree has one, else the local stand-in.
+
+    Resolved per call and not cached: the import is cheap once Python has it in
+    ``sys.modules``, and caching a negative result would defeat a deployment that adds the
+    telemetry package later.
+    """
+    try:
+        from ace.observability.telemetry import RequestLog
+
+        return RequestLog
+    except Exception:
+        return _LocalRequestLog
+
+
 def usage_to_request_log(
     usage: StreamUsage,
     *,
@@ -557,7 +597,7 @@ def usage_to_request_log(
       cache, not ACE's semantic cache (``cache_hit`` / ``cache_served``, left False here —
       no ACE lever ran on this path in Phase 0). See the RequestLog field comments.
     """
-    from ace.observability.telemetry import RequestLog
+    RequestLog = _request_log_class()
 
     cost = usage.cost()
     write_5m, write_1h = usage.split_cache_writes()
@@ -597,6 +637,28 @@ def usage_to_request_log(
     )
 
 
+def _levers_usage(usage: StreamUsage):
+    """Project this route's usage record onto the provider-neutral one levers read.
+
+    A deliberate narrowing, not a copy. ``levers.types.Usage`` carries a TTL *breakdown*
+    rather than Anthropic's ``ephemeral_5m``/``ephemeral_1h`` field names, because the
+    cache-write premium is a provider property and a lever tuned against one provider's cache
+    economics gives wrong answers on another. Doing the translation here keeps the wire
+    vocabulary on this side of the seam.
+    """
+    from ace.sidecar.levers.types import Usage
+
+    write_5m, write_1h = usage.split_cache_writes()
+    by_ttl = {k: v for k, v in (("5m", write_5m), ("1h", write_1h)) if v}
+    return Usage(
+        input_tokens=usage.input_tokens or 0,
+        output_tokens=usage.output_tokens or 0,
+        cache_read_tokens=usage.cache_read_input_tokens or 0,
+        cache_write_tokens=write_5m + write_1h,
+        cache_write_by_ttl=by_ttl,
+    )
+
+
 def install_messages_route(
     app,
     *,
@@ -607,16 +669,32 @@ def install_messages_route(
     capture=None,
     auth_config: Optional["AuthConfig"] = None,
     byok=None,
+    shadow=None,
 ) -> None:
     """Mount ``POST /v1/messages`` on ``app``.
 
     Self-contained on purpose: it takes an app and a config rather than threading through
-    ``proxy.create_app``'s ~40-parameter factory. Phase 0 runs no levers, so it needs none
-    of that wiring — and keeping the seam this thin is what lets the P0-5 local sidecar
-    mount this route alone, without the cloud gateway's cache/router/telemetry stack.
+    ``proxy.create_app``'s ~40-parameter factory — keeping the seam this thin is what lets
+    the P0-5 local sidecar mount this route alone, without the cloud gateway's
+    cache/router/telemetry stack.
 
     ``client`` injects an ``httpx.AsyncClient`` so the P0-4 conformance suite can drive this
     exact production branch through ``MockTransport`` with no live call.
+
+    ``shadow`` is an optional :class:`ace.sidecar.levers.shadow.ShadowRunner`. It is the one
+    place this module does anything a Phase 0 relay did not, and it was designed to be
+    unable to violate the fidelity invariant:
+
+    * it never sees ``raw`` — only ``parsed``, the throwaway copy this route already makes to
+      decide streaming and model, so there is no object shared with what goes upstream;
+    * it runs **after** the response has been served, on a worker thread, so a counting round
+      trip cannot land in the developer's turn latency;
+    * it is skipped entirely — one cached entry-point lookup — when no lever package is
+      installed, which is the ordinary state.
+
+    It also supplies the credential problem's only solution: under ``no_key: true`` the
+    relayed token is the sole credential that can reach the counting endpoint, and it exists
+    only for the life of this request.
     """
     cfg = config or MessagesConfig.from_env()
     auth_cfg = auth_config or AuthConfig.from_env()
@@ -637,6 +715,35 @@ def install_messages_route(
         if parse_err is not None:
             return _error(400, "invalid_request_error", parse_err)
         assert parsed is not None  # narrowed by parse_err is None
+
+        # ------------------------------------------------------------------------------
+        # ACTUATION. The one place the fidelity invariant above is deliberately relaxed,
+        # and it is relaxed by SPLICING, never by re-serializing: `levers.splice` replaces
+        # the byte range of one tool result's content inside `raw` and leaves every other
+        # byte — cache_control markers, thinking signatures, key order — as it arrived,
+        # because it never parses them out.
+        #
+        # Three properties make this safe enough to sit on a developer's hot path:
+        #   * it is skipped entirely unless a lever is resolved to `on`, which is a word
+        #     that has to be typed per lever in ~/.ace/config.json;
+        #   * a splice at or before the last cache_control breakpoint is REFUSED, checked
+        #     as a byte offset rather than argued from the lever's intent;
+        #   * any doubt at all returns the original bytes. `raw` is only rebound on a
+        #     verified result that still parses.
+        if shadow is not None:
+            try:
+                if shadow.actuating:
+                    new_raw, act = shadow.actuate(raw, parsed)
+                    if new_raw is not None:
+                        log.info(
+                            "[messages] actuated: %d splice(s), %d bytes removed, levers=%s",
+                            act.get("spliced"), act.get("saved_bytes"), act.get("levers"),
+                        )
+                        raw = new_raw
+                    elif act.get("refused"):
+                        log.debug("[messages] actuation refused: %s", act["refused"])
+            except Exception:  # pragma: no cover - never costs a turn
+                log.warning("[messages] actuation raised; relaying unmodified", exc_info=True)
 
         auth = await authenticate(request, config=auth_cfg, byok=byok)
         if not auth.ok:
@@ -716,6 +823,40 @@ def install_messages_route(
                     log.debug("[messages] accountant.record_log failed", exc_info=True)
             if on_usage is not None:
                 on_usage(usage)
+            _shadow(usage)
+
+        def _shadow(usage: StreamUsage) -> None:
+            """Hand this turn to the levers, detached. Never touches the served response.
+
+            Ordered last in `_sink` on purpose: accounting is the thing that must not be lost,
+            and a lever package is third-party code. Anything that goes wrong past this point
+            costs a measurement, never a turn.
+            """
+            if shadow is None or not shadow.enabled:
+                return
+            try:
+                from ace.sidecar.levers.counter import resolve_counter
+
+                # The in-flight credential, adopted once. `set_counter` keeps the first one
+                # for the life of the process so a refusal is remembered instead of re-asked
+                # on every turn.
+                if shadow.counter is None and api_key:
+                    counter, _ = resolve_counter(api_key, auth.scheme)
+                    shadow.set_counter(counter)
+
+                import asyncio
+
+                asyncio.get_running_loop().create_task(
+                    shadow.observe_async(
+                        parsed,
+                        _levers_usage(usage),
+                        model=usage.model or parsed.get("model") or "",
+                        request_id=req_id,
+                        session_id=session_id,
+                    )
+                )
+            except Exception:  # pragma: no cover - a shadow run never surfaces
+                log.debug("[messages] shadow lever run could not start", exc_info=True)
 
         url = cfg.base_url.rstrip("/") + MESSAGES_PATH
 
