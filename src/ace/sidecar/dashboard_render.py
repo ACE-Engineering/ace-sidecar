@@ -821,7 +821,11 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         badge_style = (
             "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
             if ak == "antigravity"
-            else "color:var(--blue);border-color:#1e355b;background:#0d1c33"
+            else (
+                "color:var(--blue);border-color:#1e355b;background:#0d1c33"
+                if ak == "claude"
+                else "color:var(--purple, #c084fc);border-color:#3b1e5b;background:#1a0d33"
+            )
         )
         score_badge = (
             "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
@@ -833,14 +837,14 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             )
         )
         breakdown_rows.append(
-            f"<tr>"
-            f"<td><span class='pill' style='{badge_style};font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
-            f"<td><span class='pill' style='{score_badge};font-weight:700;'>{a_score} ({a_grade})</span></td>"
-            f"<td class='num'><b>{a_v_rate}%</b></td>"
-            f"<td class='num'><b>{a_fsr}%</b></td>"
-            f"<td class='num'>{'<span style=\"color:var(--gold)\">' + str(a_thrash) + '</span>' if a_thrash > 0 else '0'}</td>"
-            f"<td class='num'>{a_rec} turns</td>"
-            f"<td class='num' style='color:var(--ink-3);'>{a_sess}</td>"
+            f"<tr style='border-bottom:1px solid var(--line);'>"
+            f"<td style='padding:10px 14px;'><span class='pill' style='{badge_style};font-size:13px;padding:3px 10px;font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
+            f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{a_score} ({a_grade})</span></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_v_rate}%</b></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_fsr}%</b></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(a_thrash) + '</b>' if a_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_rec} turns</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{a_sess}</td>"
             f"</tr>"
         )
 
@@ -865,28 +869,35 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             )
         )
         breakdown_rows.append(
-            f"<tr>"
-            f"<td class='m'><code style='color:var(--ink);'>{escape(m_name)}</code></td>"
-            f"<td><span class='pill' style='{score_badge};font-weight:700;'>{m_score} ({m_grade})</span></td>"
-            f"<td class='num'>{m_v_rate}%</td>"
-            f"<td class='num'>{m_fsr}%</td>"
-            f"<td class='num'>{'<span style=\"color:var(--gold)\">' + str(m_thrash) + '</span>' if m_thrash > 0 else '0'}</td>"
-            f"<td class='num'>{m_rec} turns</td>"
-            f"<td class='num' style='color:var(--ink-3);'>{m_sess}</td>"
+            f"<tr style='border-bottom:1px solid var(--line);'>"
+            f"<td class='m' style='padding:10px 14px;'><code style='color:var(--ink);font-size:14px;font-weight:500;'>{escape(m_name)}</code></td>"
+            f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{m_score} ({m_grade})</span></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_v_rate}%</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_fsr}%</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(m_thrash) + '</b>' if m_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-2);'>{m_rec} turns</td>"
+            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-3);'>{m_sess}</td>"
             f"</tr>"
         )
 
     matrix_table = ""
     if breakdown_rows:
         matrix_table = (
-            f"<div style='margin-top:16px;'>"
-            f"<div style='font-size:12px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:8px;'>"
-            f"ENGINE &amp; MODEL RELIABILITY COMPARISON"
+            f"<div style='margin-top:20px;'>"
+            f"<div style='font-size:14px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:10px;display:flex;align-items:center;gap:8px;'>"
+            f"<span>ENGINE &amp; MODEL RELIABILITY COMPARISON</span>"
             f"</div>"
-            f"<table style='margin-top:4px;width:100%;'>"
-            f"<tr><th>engine / model</th><th>score</th><th class='num'>verification</th><th class='num'>first-pass success</th>"
-            f"<th class='num'>thrash files</th><th class='num'>healing turns</th><th class='num'>sessions</th></tr>"
-            f"{''.join(breakdown_rows)}"
+            f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>"
+            f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>ENGINE / MODEL</th>"
+            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>THRASH FILES</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>HEALING TURNS</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
+            f"</tr></thead>"
+            f"<tbody>{''.join(breakdown_rows)}</tbody>"
             f"</table>"
             f"</div>"
         )
