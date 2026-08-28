@@ -277,48 +277,53 @@ def test_quality_in_payload_and_prometheus() -> None:
 
 
 def test_quality_metrics_by_agent_and_model() -> None:
+    # 20 turns per session to satisfy MIN_QUALITY_EVAL_TURNS
+    claude_turns = [
+        {
+            "model": "claude-sonnet-4-6",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 80,
+            "cache_creation_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0,
+            "calls": [
+                {"name": "Edit", "raw_target": "src/a.py", "is_edit": True, "is_src_file": True},
+                {"name": "Bash", "command": "pytest", "is_test_run": True, "is_error": False},
+            ] if i == 0 else [],
+        }
+        for i in range(20)
+    ]
+
+    agy_turns = [
+        {
+            "model": "gemini-3.6-flash",
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "cache_read_input_tokens": 30,
+            "cache_creation_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0,
+            "calls": [
+                {"name": "write_to_file", "raw_target": "src/b.py", "is_edit": True, "is_src_file": True, "is_error": True},
+            ] if i == 0 else [],
+        }
+        for i in range(20)
+    ]
+
     sess: List[Dict[str, Any]] = [
-        # Session 1: Claude using Sonnet - verified, high quality
         {
             "session": "s1",
             "agent_type": "claude",
             "cwds": ["/test"],
-            "turns": [
-                {
-                    "model": "claude-sonnet-4-6",
-                    "input_tokens": 1000,
-                    "output_tokens": 200,
-                    "cache_read_input_tokens": 800,
-                    "cache_creation_input_tokens": 0,
-                    "ephemeral_5m_input_tokens": 0,
-                    "ephemeral_1h_input_tokens": 0,
-                    "calls": [
-                        {"name": "Edit", "raw_target": "src/a.py", "is_edit": True, "is_src_file": True},
-                        {"name": "Bash", "command": "pytest", "is_test_run": True, "is_error": False},
-                    ],
-                }
-            ],
+            "turns": claude_turns,
             "events": [],
         },
-        # Session 2: Antigravity using Gemini Flash - unverified, error
         {
             "session": "s2",
             "agent_type": "antigravity",
             "cwds": ["/test"],
-            "turns": [
-                {
-                    "model": "gemini-3.6-flash",
-                    "input_tokens": 500,
-                    "output_tokens": 100,
-                    "cache_read_input_tokens": 300,
-                    "cache_creation_input_tokens": 0,
-                    "ephemeral_5m_input_tokens": 0,
-                    "ephemeral_1h_input_tokens": 0,
-                    "calls": [
-                        {"name": "write_to_file", "raw_target": "src/b.py", "is_edit": True, "is_src_file": True, "is_error": True},
-                    ],
-                }
-            ],
+            "turns": agy_turns,
             "events": [],
         },
     ]
@@ -347,8 +352,36 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert "Claude Code" in html or "claude" in html
     assert "claude-sonnet-4-6" in html
     assert "gemini-3.6-flash" in html
-    assert "Engine / model" in html
-    assert "Engine &amp; model reliability" in html
+    assert "ENGINE / MODEL" in html or "Engine / model" in html
+
+
+def test_quality_metrics_turn_threshold_filter() -> None:
+    # Session with only 5 turns should NOT be evaluated in by_agent or by_model
+    short_sess = [
+        {
+            "session": "short_s1",
+            "agent_type": "codex",
+            "cwds": ["/test"],
+            "turns": [
+                {
+                    "model": "gpt-5.3-codex",
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": [],
+                }
+                for _ in range(5)  # only 5 turns < 20
+            ],
+            "events": [],
+        }
+    ]
+
+    qm = quality_metrics(short_sess)
+    assert "codex" not in qm["by_agent"]
+    assert len(qm["by_model"]) == 0
 
 
 def test_quality_metrics_by_task_category() -> None:
@@ -492,7 +525,10 @@ def test_quality_metrics_by_task_category() -> None:
 
     # Render dashboard
     html = render(payload)
-    assert "Capability by coding task domain" in html
+    assert (
+        "CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN" in html
+        or "Capability by coding task domain" in html
+    )
     assert "UI &amp; Frontend" in html or "UI & Frontend" in html
 
 

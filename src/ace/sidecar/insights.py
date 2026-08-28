@@ -2436,12 +2436,15 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+MIN_QUALITY_EVAL_TURNS = 20
+
+
 def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Calculates unified code quality, verification hygiene, and reliability metrics.
 
     Includes top-line metrics along with breakdowns:
-    - by_agent: Quality scores partitioned per agent engine (Claude Code, Antigravity, Codex).
-    - by_model: Quality scores partitioned per LLM model.
+    - by_agent: Quality scores partitioned per agent engine (Claude Code, Antigravity, Codex) with >= 20 turns.
+    - by_model: Quality scores partitioned per LLM model with >= 20 turns.
     - by_category: Quality and capability metrics partitioned per coding task domain (UI, Backend, Testing, Docs, Research).
     """
     overall = _calc_quality_block(sess)
@@ -2451,7 +2454,7 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         overall["by_category"] = {}
         return overall
 
-    # Group by agent
+    # Group by agent (exclude agents with < 20 turns)
     by_agent: Dict[str, Any] = {}
     agent_groups: Dict[str, List[Dict[str, Any]]] = {}
     for s in sess:
@@ -2459,15 +2462,19 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         agent_groups.setdefault(ak, []).append(s)
 
     for ak, a_sess in agent_groups.items():
+        a_turns = sum(len(s.get("turns", [])) for s in a_sess)
+        if a_turns < MIN_QUALITY_EVAL_TURNS:
+            continue
         block = _calc_quality_block(a_sess)
         by_agent[ak] = {
             "agent": ak,
             "label": AGENTS.get(ak, ak.capitalize()),
             "sessions": len(a_sess),
+            "total_turns": a_turns,
             **block,
         }
 
-    # Group by model
+    # Group by model (exclude models with < 20 turns or synthetic tags)
     model_sessions: Dict[str, List[Dict[str, Any]]] = {}
     for s in sess:
         models_in_s = set(t.get("model") for t in s.get("turns", []) if t.get("model"))
@@ -2485,11 +2492,15 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     by_model: List[Dict[str, Any]] = []
     for m_name, m_sess in sorted(model_sessions.items(), key=lambda kv: -len(kv[1])):
+        m_turns = sum(len(s.get("turns", [])) for s in m_sess)
+        if m_turns < MIN_QUALITY_EVAL_TURNS or str(m_name).startswith("<"):
+            continue
         block = _calc_quality_block(m_sess)
         by_model.append(
             {
                 "model": m_name,
                 "sessions": len(m_sess),
+                "total_turns": m_turns,
                 **block,
             }
         )
@@ -2509,7 +2520,8 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         best_agent_score = -1
         for ak in (AGENT_CLAUDE, AGENT_ANTIGRAVITY, AGENT_CODEX):
             sub_ak = [s for s in c_sess if (s.get("agent_type") or AGENT_CLAUDE) == ak]
-            if sub_ak:
+            sub_ak_turns = sum(len(s.get("turns", [])) for s in sub_ak)
+            if sub_ak and sub_ak_turns >= MIN_QUALITY_EVAL_TURNS:
                 sc = _calc_quality_block(sub_ak)["quality_score"]
                 if sc > best_agent_score:
                     best_agent_score = sc
@@ -2529,7 +2541,8 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
                 proj = [t for t in s.get("turns", []) if t.get("model") == m]
                 if proj:
                     sub_m.append({"turns": proj, "events": s.get("events", [])})
-            if sub_m:
+            sub_m_turns = sum(len(s.get("turns", [])) for s in sub_m)
+            if sub_m and sub_m_turns >= MIN_QUALITY_EVAL_TURNS:
                 sc = _calc_quality_block(sub_m)["quality_score"]
                 if sc > best_model_score:
                     best_model_score = sc
