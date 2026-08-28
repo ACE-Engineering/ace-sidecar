@@ -26,13 +26,6 @@ them mean "no live number":
 ``measured``     real edits, exactly counted, priced from the catalog and net of the
                  cache-write penalty.
 
-A fifth, ``no_content``, is the one that matters most for the dashboard: the transcript scan
-deliberately carries sizes and hashes rather than text, so a lever can be installed, enabled,
-and still price nothing here. **``measured`` is therefore unreachable from transcripts
-alone** — it needs the proxy or a hook to supply the bytes. That is a property of the
-measurement path, not a bug, and the page says which of the two it is rather than showing an
-empty figure both times.
-
 Only ``measured`` may put a dollar figure on the page.
 """
 
@@ -42,21 +35,20 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
+from ace.sidecar.levers.counter import resolve_counter
 from ace.sidecar.levers.ledger import FIDELITY_MEASURED, price_all
 from ace.sidecar.levers.protocol import MODE_OFF, LeverContext, TokenCounter
 from ace.sidecar.levers.registry import discover, load_settings, propose_safely, resolve_modes
 from ace.sidecar.levers.types import from_corpus_sessions
 
-__all__ = ["STATUS_NO_PACKAGE", "STATUS_ALL_OFF", "STATUS_NO_COUNTER",
-           "STATUS_NO_CONTENT", "STATUS_MEASURED",
-           "resolve_counter", "rail_payload"]
+__all__ = ["STATUS_NO_PACKAGE", "STATUS_ALL_OFF", "STATUS_NO_COUNTER", "STATUS_MEASURED",
+           "resolve_counter", "rail_payload", "refresh_measured"]
 
 log = logging.getLogger(__name__)
 
 STATUS_NO_PACKAGE = "no_package"
 STATUS_ALL_OFF = "all_off"
 STATUS_NO_COUNTER = "no_counter"
-STATUS_NO_CONTENT = "no_content"
 STATUS_MEASURED = "measured"
 
 _STATUS_NOTE = {
@@ -64,11 +56,6 @@ _STATUS_NOTE = {
     STATUS_ALL_OFF: "levers installed, all off — enable one in ~/.ace/config.json",
     STATUS_NO_COUNTER: (
         "no exact token counter configured — the ledger prices nothing it cannot count"
-    ),
-    STATUS_NO_CONTENT: (
-        "levers ran, but the transcript scan carries sizes and hashes, not tool-result text — "
-        "an exact token delta needs the bytes, which reach the ledger only through the proxy "
-        "or a hook"
     ),
     STATUS_MEASURED: "measured on your own sessions, net of the cache-write penalty",
 }
@@ -85,42 +72,68 @@ def _levers() -> Sequence[Any]:
     return _DISCOVERED
 
 
-def resolve_counter() -> tuple[Optional[TokenCounter], str]:
-    """An **exact** token counter and where it came from, or ``(None, reason)``.
+def _measured(store: Any, *, since: Optional[float] = None) -> Dict[str, Any]:
+    """Aggregated live results from the telemetry store, or ``{}``.
 
-    Exactness is the whole requirement, so this resolves only counters that are the model
-    vendor's own: Anthropic's ``/v1/messages/count_tokens`` for Claude. ``tiktoken`` is
-    deliberately not offered as a fallback — it is OpenAI's BPE and only a proxy for anything
-    else, and a proxy here turns a measured saving into an estimate.
-
-    Returning ``None`` is a normal outcome, not a failure. It costs the live column and
-    leaves the measured headroom rail exactly as it is.
+    Tolerant of a store that predates the ``lever_turns`` table, or of no store at all: this
+    is an optional column on a dashboard that has to render either way, and an old
+    ``~/.ace/telemetry.db`` is the common case immediately after an upgrade.
     """
+    if store is None or not hasattr(store, "lever_summary"):
+        return {}
     try:
-        import anthropic  # noqa: F401
+        summary = store.lever_summary(since=since)
     except Exception:
-        return None, "the `anthropic` package is not installed"
+        log.debug("[levers] lever_summary failed", exc_info=True)
+        return {}
+    return summary if summary.get("by_lever") else {}
 
-    import os
 
-    if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
-        return None, "no ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in the environment"
+def _measured_note(prior_status: Optional[str]) -> str:
+    """The measured note, qualified by what discovery currently says.
 
-    try:
-        from anthropic import Anthropic
-
-        client = Anthropic()
-    except Exception as exc:  # credentials present but unusable
-        return None, f"the Anthropic client could not be constructed ({type(exc).__name__})"
-
-    def count(text: str, *, model: str) -> int:
-        r = client.messages.count_tokens(
-            model=model or "claude-sonnet-5",
-            messages=[{"role": "user", "content": text}],
+    Recorded results and installed packages are two independent facts, and they disagree in
+    an ordinary way: a developer measures a lever for a week, then uninstalls or disables it.
+    Reporting ``no_package`` and dropping the rows would hide a real measurement behind a
+    packaging detail; reporting them unqualified would imply the lever is still running.
+    Both facts get said.
+    """
+    if prior_status == STATUS_NO_PACKAGE:
+        return (
+            _STATUS_NOTE[STATUS_MEASURED]
+            + " — from turns already recorded; no lever package is installed now"
         )
-        return int(r.input_tokens)
+    if prior_status == STATUS_ALL_OFF:
+        return (
+            _STATUS_NOTE[STATUS_MEASURED]
+            + " — from turns already recorded; every installed lever is now off"
+        )
+    return _STATUS_NOTE[STATUS_MEASURED]
 
-    return count, "Anthropic /v1/messages/count_tokens"
+
+def refresh_measured(
+    payload: Mapping[str, Any], store: Any, *, since: Optional[float] = None
+) -> Dict[str, Any]:
+    """A rail payload with its live half re-read from ``store``.
+
+    ``insights._build_payload`` is memoised on a transcript fingerprint, which is exactly
+    right for the installed/modes half — that changes when a package is installed, not when a
+    turn is proxied. The measured half moves on every turn, so caching it with the rest would
+    freeze the one number on the rail that is supposed to be alive. Same treatment
+    ``build`` already gives ``live``.
+
+    Returns a copy. The cached payload is shared, and writing the live keys into it is how a
+    per-request value ends up served to the next caller.
+    """
+    out = dict(payload)
+    measured = _measured(store, since=since)
+    if not measured:
+        return out
+    out["measured"] = measured
+    out["turns_observed"] = measured.get("turns_observed", 0)
+    out["status"] = STATUS_MEASURED
+    out["note"] = _measured_note(out.get("status"))
+    return out
 
 
 def rail_payload(
@@ -128,6 +141,10 @@ def rail_payload(
     *,
     counter: Optional[TokenCounter] = None,
     counter_note: str = "",
+    credential: Optional[str] = None,
+    scheme: str = "api_key",
+    store: Any = None,
+    since: Optional[float] = None,
     config: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """What the dashboard needs to render the live half of the lever rail.
@@ -135,6 +152,16 @@ def rail_payload(
     Runs only levers resolved to a non-``off`` mode, over the sessions already scoped to the
     dashboard's range and agent filter. Cheap and total when nothing is installed, which is
     the common path: one entry-point lookup and an early return.
+
+    ``store`` is the sidecar's :class:`~ace.gateway.local_store.LocalStore`. It carries the
+    measured half, recorded turn by turn as levers ran on the proxy path, and reading it is
+    what makes a measured result survive the request that produced it.
+
+    ``credential``/``scheme`` are for a caller that holds one — the proxy path, which is the
+    only place a credential exists at all under ``no_key: true``. The dashboard renders
+    outside any request and passes neither, so it falls back to the environment and usually
+    reports :data:`STATUS_NO_COUNTER` with the reason attached. That is the honest state, not
+    a degraded one: this half of the rail is measured on proxied turns.
     """
     t0 = time.monotonic()
     found = _levers()
@@ -149,21 +176,48 @@ def rail_payload(
         "by_lever": {},
         "entries": [],
         "counter": counter_note,
+        "measured": {},
+        "turns_observed": 0,
         "elapsed_ms": 0.0,
     }
-    if not found:
-        base.update(status=STATUS_NO_PACKAGE, note=_STATUS_NOTE[STATUS_NO_PACKAGE])
+    # Read once, up front: measured rows are recorded history and stay true regardless of what
+    # is installed or enabled *right now*. Deciding `no_package` before looking would hide a
+    # real measurement behind a packaging detail.
+    measured_rows = _measured(store, since=since)
+
+    def _terminal(status: str) -> Dict[str, Any]:
+        base.update(status=status, note=_STATUS_NOTE[status])
+        if measured_rows:
+            base["measured"] = measured_rows
+            base["turns_observed"] = measured_rows.get("turns_observed", 0)
+            base.update(status=STATUS_MEASURED, note=_measured_note(status))
+        base["elapsed_ms"] = (time.monotonic() - t0) * 1000.0
         return base
+
+    if not found:
+        return _terminal(STATUS_NO_PACKAGE)
 
     modes = resolve_modes(found, config=config)
     base["modes"] = modes
     active = [r for r in found if modes.get(r.id, MODE_OFF) != MODE_OFF]
     if not active:
-        base.update(status=STATUS_ALL_OFF, note=_STATUS_NOTE[STATUS_ALL_OFF])
+        return _terminal(STATUS_ALL_OFF)
+
+    # The measured half is READ, not recomputed. Levers run once, against the real request
+    # body, in the proxy's background task (`levers.shadow`); this reads what they recorded.
+    #
+    # It cannot be derived here instead. The dashboard has transcripts — hashes and sizes,
+    # no text — and an exact token delta needs the bytes. Recomputing over history would
+    # force a byte-ratio fallback, which is the one thing the ledger refuses to do.
+    if measured_rows:
+        base["measured"] = measured_rows
+        base["turns_observed"] = measured_rows.get("turns_observed", 0)
+        base.update(status=STATUS_MEASURED, note=_STATUS_NOTE[STATUS_MEASURED])
+        base["elapsed_ms"] = (time.monotonic() - t0) * 1000.0
         return base
 
     if counter is None:
-        counter, counter_note = resolve_counter()
+        counter, counter_note = resolve_counter(credential, scheme)
         base["counter"] = counter_note
     if counter is None:
         base.update(
@@ -177,12 +231,13 @@ def rail_payload(
     # can be installed, enabled, and still contribute nothing here: it needs the proxy or a
     # hook to supply the text.
     typed = from_corpus_sessions(sessions)
+    now = time.time()
     pairs = []
     for reg in active:
         ctx = LeverContext(
             count_tokens=counter,
             mode=modes[reg.id],
-            now=time.time(),
+            now=now,
             settings=load_settings(reg.id, config=config),
         )
         for s in typed:
@@ -190,7 +245,13 @@ def rail_payload(
             if proposal is not None:
                 pairs.append((s, proposal))
 
-    report = price_all(pairs, ctx) if pairs else None
+    # Priced under a context of its own rather than whichever lever's `ctx` the loop above
+    # happened to exit with. The ledger reads only `count_tokens`, so the leaked binding was
+    # harmless today — but it silently attributed one lever's `settings` and `mode` to every
+    # other lever's pricing, which is exactly the kind of thing that stops being harmless the
+    # first time the ledger reads one more field.
+    pricing_ctx = LeverContext(count_tokens=counter, now=now)
+    report = price_all(pairs, pricing_ctx) if pairs else None
     if report is not None:
         base["by_lever"] = report.by_lever()
         base["entries"] = [
@@ -208,7 +269,8 @@ def rail_payload(
     if measured:
         base.update(status=STATUS_MEASURED, note=_STATUS_NOTE[STATUS_MEASURED])
     else:
-        # Distinguish "could not count" from "nothing to do" — they look identical on the
-        # page and mean opposite things about whether this lever is worth enabling.
-        base.update(status=STATUS_NO_CONTENT, note=_STATUS_NOTE[STATUS_NO_CONTENT])
+        base.update(
+            status=STATUS_NO_COUNTER,
+            note="levers ran but produced no measurable edit on these sessions",
+        )
     return base

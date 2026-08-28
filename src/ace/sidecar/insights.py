@@ -2460,6 +2460,19 @@ def _lever_rail_payload(scoped: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"status": "no_package", "note": "lever rail unavailable", "installed": []}
 
 
+def _refresh_lever_rail(payload: Dict[str, Any], store: Any) -> Dict[str, Any]:
+    """Live half of the lever rail, re-read from the telemetry store. Never raises."""
+    if store is None or not payload:
+        return payload
+    try:
+        from ace.sidecar.levers.rail import refresh_measured
+
+        return refresh_measured(payload, store)
+    except Exception:
+        log.warning("[levers] measured rail refresh failed", exc_info=True)
+        return payload
+
+
 def _build_payload(
     all_sessions: List[Dict[str, Any]],
     capture: Optional[Dict[str, Any]],
@@ -2562,6 +2575,11 @@ def build(
     # live keys below are per-request and must not be written into the shared cached dict.
     out = dict(payload)
     out["live"] = store.summary() if store is not None else {"turns": 0}
+    # Re-read for the same reason `live` is: the measured lever rail moves on every proxied
+    # turn, while the payload around it is memoised on a transcript fingerprint that a
+    # proxied turn does not change. Cached with the rest, the one live number on the rail
+    # would be frozen at whatever it read when the transcripts last changed.
+    out["levers"] = _refresh_lever_rail(out.get("levers") or {}, store)
     out["recent"] = store.recent(30) if store is not None else []
     return out
 

@@ -1693,52 +1693,62 @@ def _lever_rail(d: Dict[str, Any]) -> str:
             f"<div class='lm'><span>{_pct(r['share'], 2)} of billed</span>"
             f"<span class='{risk}'>{risk or '—'}</span></div></div>"
         )
+    out.extend(_measured_rows(d))
     return "".join(out)
 
 
-def _lever_live(d: Dict[str, Any]) -> str:
-    """The measured half of the rail: what an installed lever actually did, if any did.
+def _measured_rows(d: Dict[str, Any]) -> List[str]:
+    """Rows for levers that actually ran, appended to the same rail.
 
-    Rendered as its own block rather than merged into the headroom rows above, because the
-    two are different claims about different things. A headroom row is a byte-turn
-    *simulation* of what a lever would be worth if it existed. A row here is a lever that
-    exists, ran, and was priced exactly — token-counted, and net of the cache-write penalty
-    that an edit to already-cached content incurs.
+    Deliberately **rows in the existing list**, not a panel of their own. One rail is what a
+    reader can compare; a second block below it reads as a second scoreboard and invites
+    exactly the addition that must never happen.
 
-    Merging them into one number would be the single most misleading thing this page could
-    do, so they never share a row and the block below is absent unless something real was
-    measured.
+    What must not happen is the two numbers merging. A simulated row is a byte-turn estimate
+    of what a lever *would* be worth; a measured row is a lever that exists, ran against the
+    real request body, and was token-counted against the turn it changed. They never share a
+    row, they never share a bar scale, and every measured row is tagged so the claim is legible
+    without the tooltip.
     """
     lv = d.get("levers") or {}
-    status = lv.get("status") or "no_package"
-    if status == "no_package":
-        # The ordinary state for the OSS sidecar alone. The note under the rail already
-        # says so; a second empty block would be noise.
-        return ""
+    measured = (lv.get("measured") or {}).get("by_lever") or []
+    if not measured:
+        # Every other state -- nothing installed, all off, no counter -- is already said in
+        # words by `_lever_note`. A second empty element would be noise.
+        return []
 
-    installed = lv.get("installed") or []
-    if status != "measured":
-        return (
-            f"<div class='sw dis' title='{escape(str(lv.get('note') or ''))}'>"
-            f"{len(installed)} lever{'' if len(installed) == 1 else 's'} installed"
-            f"<span class='pill soon'>{escape(status.replace('_', ' ').upper())}</span></div>"
+    labels = {i["id"]: (i.get("label") or i["id"]) for i in (lv.get("installed") or [])}
+    # Scaled within the measured group. Sharing the simulated rail's scale would imply the
+    # two are commensurable, which is the whole thing this page must not say.
+    top = max((abs(r.get("usd") or 0.0) for r in measured), default=0.0)
+    rows = []
+    for r in sorted(measured, key=lambda x: -(x.get("usd") or 0.0)):
+        usd = r.get("usd") or 0.0
+        turns = r.get("turns") or 0
+        toks = r.get("removed_tokens") or 0
+        unpriced = r.get("unpriced_turns") or 0
+        w = (abs(usd) / top * 100.0) if top > 0 else 0.0
+        # A lever can measure NEGATIVE: an edit to already-cached content pays a re-write
+        # premium the saving has to earn back. Showing that is the point of measuring.
+        z = "" if usd > 0 else " z"
+        tip = (
+            f"Measured on {turns} proxied turn{'' if turns == 1 else 's'}: "
+            f"{toks:,} tokens removed from the prompt actually sent, counted with the "
+            f"provider's own counter and priced against the buckets those turns were billed "
+            f"at. Not a simulation, and not comparable with the headroom rows above."
         )
-
-    by = lv.get("by_lever") or {}
-    labels = {i["id"]: i.get("label") or i["id"] for i in installed}
-    rows = sorted(by.items(), key=lambda kv: -kv[1])
-    out = ["<div class='h' style='margin-top:10px'>Measured &mdash; levers actually run</div>"]
-    for lever_id, usd in rows:
-        # A lever can measure NEGATIVE: an edit to content the cache already holds pays a
-        # re-write premium the saving has to earn back. Showing that is the point.
-        cls = "" if usd >= 0 else " z"
-        out.append(
-            f"<div class='sw' title='Measured on your own sessions, net of the cache-write "
-            f"penalty. Counter: {escape(str(lv.get('counter') or 'n/a'))}.'>"
-            f"{escape(labels.get(lever_id, lever_id))}"
-            f"<span class='pill{cls}'>{_usd(usd)}</span></div>"
+        if unpriced:
+            tip += f" {unpriced} turn(s) ran on a model with no catalog entry — unpriced, not free."
+        rows.append(
+            f"<div class='lv' title='{escape(tip)}'>"
+            f"<div class='lr'><span class='rk'>&#10003;</span>"
+            f"<span class='ln'>{escape(labels.get(r['lever'], r['lever']))}</span>"
+            f"<span class='lu{z}'>{_usd(usd)}</span></div>"
+            f"<div class='lb{z}'><i style='width:{w:.1f}%'></i></div>"
+            f"<div class='lm'><span>{turns} turn{'' if turns == 1 else 's'}, "
+            f"{_f(toks)} tokens</span><span class='NONE'>MEASURED</span></div></div>"
         )
-    return "".join(out)
+    return rows
 
 
 def _lever_note(d: Dict[str, Any]) -> str:
@@ -1802,7 +1812,6 @@ def _rail(d: Dict[str, Any]) -> str:
  sent.'>enforce<span class='pill soon'>PHASE 2</span></div>
 </div>
 <div class='ctl'><div class='h'>Levers(PHASE 1) &mdash; headroom on your data</div>{levers}
-  {_lever_live(d)}
   <div class='note-s'>{_lever_note(d)}</div>
 </div>
 <div class='ctl'><div class='h'>Data</div>
