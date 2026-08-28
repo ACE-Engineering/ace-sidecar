@@ -56,7 +56,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from ace.sidecar.levers.protocol import MODE_OFF, Edit, LeverContext, Proposal
+from ace.sidecar.levers.protocol import MODE_OFF, MODE_ON, Edit, LeverContext, Proposal
 from ace.sidecar.levers.registry import (
     RegisteredLever,
     discover,
@@ -64,6 +64,8 @@ from ace.sidecar.levers.registry import (
     propose_safely,
     resolve_modes,
 )
+from ace.sidecar.levers.splice import SpliceRefused, apply_splices
+from ace.sidecar.levers.splice import plan as splice_plan
 from ace.sidecar.levers.types import ContentRef, Session, ToolCall, Turn, Usage
 
 __all__ = [
@@ -850,6 +852,103 @@ class ShadowRunner:
             edits=edits, note=note,
             elapsed_ms=(time.monotonic() - t0) * 1000.0,
         )
+
+    # -- actuation: the only path that changes what goes upstream -----------------------
+
+    @property
+    def actuating(self) -> bool:
+        """Whether any lever is resolved to ``on``. The early-out on the hot path."""
+        modes = self.modes()
+        return any(modes.get(r.id) == MODE_ON for r in self._discovered())
+
+    def actuate(
+        self, raw: bytes, body: Mapping[str, Any]
+    ) -> Tuple[Optional[bytes], Dict[str, Any]]:
+        """Rewritten request bytes, or ``None`` to send the original unchanged.
+
+        Runs SYNCHRONOUSLY, before the upstream call, which is the one place in this package
+        that costs a developer's turn any latency. It is kept cheap deliberately: levers
+        propose from sizes and local bytes, and nothing here counts tokens. Counting is a
+        network round trip and belongs to measurement, which still happens afterwards.
+
+        The applied edit is taken from the SAME ``apply_edits`` result the shadow path
+        measures, so what ships is byte-identical to what was scored. Measuring one thing and
+        applying another is the failure this arrangement exists to prevent.
+
+        Returns ``None`` on any doubt whatsoever. The original bytes are always a correct
+        answer; a corrupted request is not, and a lever's saving is never worth one.
+        """
+        info: Dict[str, Any] = {"levers": [], "spliced": 0, "saved_bytes": 0, "refused": []}
+        on = [r for r in self.active() if self.modes().get(r.id) == MODE_ON]
+        if not on:
+            return None, info
+
+        try:
+            session, anchors = body_to_session(body)
+        except Exception:
+            log.debug("[levers] actuate: could not adapt body", exc_info=True)
+            return None, info
+
+        # A counter that refuses. Proposing must not depend on counting — that is a network
+        # call, and this is the hot path. A lever reaching for it raises, `propose_safely`
+        # isolates it, and the turn goes out unmodified rather than slowly.
+        def _no_counting(text: str, *, model: str) -> int:
+            raise RuntimeError("token counting is not available during actuation")
+
+        call_ids: Dict[Tuple[int, int], str] = {}
+        for ti, ci, call in session.iter_calls():
+            if call.call_id:
+                call_ids[(ti, ci)] = str(call.call_id)
+
+        edits: List[Edit] = []
+        replacements: Dict[Tuple[int, int], Any] = {}
+        for reg in on:
+            ctx = LeverContext(
+                count_tokens=_no_counting, mode=MODE_ON, now=time.time(),
+                settings=load_settings(reg.id, config=self._config),
+            )
+            proposal = propose_safely(reg, session, ctx)
+            if proposal is None or not proposal.edits:
+                continue
+            try:
+                new_body, applied, _ = apply_edits(body, proposal.edits, anchors)
+            except Exception:
+                log.debug("[levers] actuate: %r counterfactual failed", reg.id, exc_info=True)
+                continue
+            for e in proposal.edits:
+                anchor = anchors.get((e.turn_index, e.call_index))
+                if anchor is None:
+                    continue
+                try:
+                    blk = new_body["messages"][anchor.msg_index]["content"][anchor.block_index]
+                except Exception:
+                    continue
+                if not isinstance(blk, dict) or "content" not in blk:
+                    continue
+                replacements[(e.turn_index, e.call_index)] = blk["content"]
+                edits.append(e)
+            info["levers"].append(reg.id)
+
+        if not edits:
+            return None, info
+
+        try:
+            splices, refused = splice_plan(raw, edits, call_ids, replacements=replacements)
+            info["refused"] = refused
+            if not splices:
+                return None, info
+            new_raw = apply_splices(raw, splices)
+        except SpliceRefused as exc:
+            info["refused"].append(str(exc))
+            log.debug("[levers] actuate refused: %s", exc)
+            return None, info
+        except Exception:
+            log.warning("[levers] actuate failed; sending the original", exc_info=True)
+            return None, info
+
+        info["spliced"] = len(splices)
+        info["saved_bytes"] = len(raw) - len(new_raw)
+        return new_raw, info
 
     # -- the async entry point the proxy uses ------------------------------------------
 

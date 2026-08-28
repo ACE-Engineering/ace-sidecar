@@ -716,6 +716,35 @@ def install_messages_route(
             return _error(400, "invalid_request_error", parse_err)
         assert parsed is not None  # narrowed by parse_err is None
 
+        # ------------------------------------------------------------------------------
+        # ACTUATION. The one place the fidelity invariant above is deliberately relaxed,
+        # and it is relaxed by SPLICING, never by re-serializing: `levers.splice` replaces
+        # the byte range of one tool result's content inside `raw` and leaves every other
+        # byte — cache_control markers, thinking signatures, key order — as it arrived,
+        # because it never parses them out.
+        #
+        # Three properties make this safe enough to sit on a developer's hot path:
+        #   * it is skipped entirely unless a lever is resolved to `on`, which is a word
+        #     that has to be typed per lever in ~/.ace/config.json;
+        #   * a splice at or before the last cache_control breakpoint is REFUSED, checked
+        #     as a byte offset rather than argued from the lever's intent;
+        #   * any doubt at all returns the original bytes. `raw` is only rebound on a
+        #     verified result that still parses.
+        if shadow is not None:
+            try:
+                if shadow.actuating:
+                    new_raw, act = shadow.actuate(raw, parsed)
+                    if new_raw is not None:
+                        log.info(
+                            "[messages] actuated: %d splice(s), %d bytes removed, levers=%s",
+                            act.get("spliced"), act.get("saved_bytes"), act.get("levers"),
+                        )
+                        raw = new_raw
+                    elif act.get("refused"):
+                        log.debug("[messages] actuation refused: %s", act["refused"])
+            except Exception:  # pragma: no cover - never costs a turn
+                log.warning("[messages] actuation raised; relaying unmodified", exc_info=True)
+
         auth = await authenticate(request, config=auth_cfg, byok=byok)
         if not auth.ok:
             err = auth.error

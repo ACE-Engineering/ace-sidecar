@@ -583,3 +583,165 @@ def test_an_old_database_gains_the_columns(tmp_path):
     assert {"revisit_candidates", "revisits_observed", "revisits_paginated",
             "revisits_same_earlier"} <= cols
     assert s.lever_summary()["rows"] == 0
+
+
+# -- actuation: byte-splice, the only path that changes what goes upstream -------------------
+
+
+def cached_body(dump=DUMP):
+    """A body shaped like a real cached agent turn: a breakpoint mid-history, a fresh tail."""
+    return {
+        "model": "claude-sonnet-5", "max_tokens": 1024,
+        "system": [{"type": "text", "text": "agent", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "considering", "signature": "SIG-abc-123"},
+                {"type": "tool_use", "id": "tu_1", "name": "Bash",
+                 "input": {"command": "cat old.log"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu_1", "content": dump,
+                 "cache_control": {"type": "ephemeral"}}]},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "tu_2", "name": "Bash",
+                 "input": {"command": "cat new.log"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu_2", "content": dump}]},
+        ],
+    }
+
+
+class TruncAll:
+    """Proposes on EVERY oversized result, including cached history — so the splice guard,
+    not the lever's good manners, is what has to refuse the unsafe one."""
+
+    id, label = "tail_truncation", "Cap oversized tool results"
+    risk, requires_content = L.RISK_LOW, False
+
+    def propose(self, session, ctx):
+        return L.Proposal(self.id, tuple(
+            L.Edit(turn_index=t, call_index=c, kind="truncate", reason="big", keep_bytes=256)
+            for t, c, x in session.iter_calls() if x.result_bytes >= 4096))
+
+
+def test_actuation_is_off_unless_a_lever_says_on(store):
+    """`on` is a word typed per lever. Shadow must never change a byte."""
+    app, runner = make_app(store, config={"levers": {"tail_truncation": "shadow"}},
+                           levers=(TruncAll,))
+    assert not runner.actuating
+    seen = {}
+    app, runner = make_app(store, seen=seen, levers=(TruncAll,),
+                           config={"levers": {"tail_truncation": "shadow"}})
+
+    async def main():
+        return await drive(app, payload=cached_body())
+
+    sent = asyncio.run(main())
+    assert seen["body"] == sent, "shadow mode must relay byte-for-byte"
+
+
+def test_actuation_splices_the_tail_and_leaves_the_cached_prefix_alone(store):
+    """The whole design in one assertion: fewer bytes upstream, prefix untouched."""
+    seen = {}
+    app, runner = make_app(store, seen=seen, levers=(TruncAll,),
+                           config={"levers": {"tail_truncation": {"mode": "on",
+                                                                  "keep_bytes": 256}}})
+    assert runner.actuating
+
+    async def main():
+        return await drive(app, payload=cached_body())
+
+    sent = asyncio.run(main())
+    got = seen["body"]
+    assert len(got) < len(sent), "actuation must reduce the outbound body"
+
+    orig, new = json.loads(sent), json.loads(got)
+    # the cached history is untouched...
+    assert new["messages"][2]["content"][0]["content"] == orig["messages"][2]["content"][0]["content"]
+    # ...and the fresh tail is trimmed
+    assert len(new["messages"][4]["content"][0]["content"]) < len(DUMP)
+
+    # everything the cache holds is byte-for-byte identical
+    from ace.sidecar.levers.splice import last_breakpoint_offset
+    bp = last_breakpoint_offset(sent)
+    assert bp > 0
+    assert got[: bp + 1] == sent[: bp + 1], "bytes at or before the breakpoint changed"
+
+
+def test_actuation_preserves_the_fields_a_round_trip_would_lose(store):
+    """The reason this splices instead of re-serializing. `cache_control` markers and
+    extended-thinking signatures have no slot in any intermediate representation; losing the
+    first means nothing is cached at all, losing the second gets the turn rejected."""
+    seen = {}
+    app, _ = make_app(store, seen=seen, levers=(TruncAll,),
+                      config={"levers": {"tail_truncation": {"mode": "on",
+                                                             "keep_bytes": 256}}})
+
+    async def main():
+        return await drive(app, payload=cached_body())
+
+    asyncio.run(main())
+    new = json.loads(seen["body"])
+    assert new["messages"][1]["content"][0]["signature"] == "SIG-abc-123"
+    assert new["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert new["messages"][2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_a_splice_before_the_breakpoint_is_refused_not_applied(store):
+    """The guard is a byte-offset comparison, not a claim about the lever's intent — TruncAll
+    proposes on cached history and the splice layer is what says no."""
+    from ace.sidecar.levers.shadow import ShadowRunner
+    from ace.sidecar.levers.counter import AnthropicCounter
+
+    runner = ShadowRunner(config={"levers": {"tail_truncation": {"mode": "on",
+                                                                 "keep_bytes": 256}}})
+    runner._levers = (L.RegisteredLever(lever=TruncAll(), dist="test"),)
+    body = cached_body()
+    raw = json.dumps(body).encode()
+    new_raw, info = runner.actuate(raw, body)
+
+    assert new_raw is not None
+    assert info["spliced"] == 1, "only the tail may be spliced"
+    assert any("cache breakpoint" in r for r in info["refused"]), info["refused"]
+
+
+def test_actuation_never_costs_a_turn_when_it_fails(store):
+    """Any doubt returns the original bytes. A corrupted request is worse than an
+    unoptimized one, and a lever's saving is never worth one."""
+    class Exploding:
+        id, label = "boom", "Boom"
+        risk, requires_content = L.RISK_LOW, False
+        def propose(self, session, ctx):
+            raise ValueError("nope")
+
+    seen = {}
+    app, _ = make_app(store, seen=seen, levers=(Exploding,),
+                      config={"levers": {"boom": {"mode": "on"}}})
+
+    async def main():
+        return await drive(app, payload=cached_body())
+
+    sent = asyncio.run(main())
+    assert seen["body"] == sent, "a failing lever must relay the original bytes"
+
+
+def test_actuation_does_not_count_tokens_on_the_hot_path(store):
+    """Counting is a network round trip. A lever reaching for it during actuation raises,
+    is isolated, and the turn goes out unmodified rather than slowly."""
+    calls = []
+
+    class NeedsCount:
+        id, label = "needs_count", "Needs counting"
+        risk, requires_content = L.RISK_LOW, False
+        def propose(self, session, ctx):
+            calls.append(1)
+            ctx.count_tokens("x", model="m")     # must raise
+            return L.Proposal(self.id, ())
+
+    from ace.sidecar.levers.shadow import ShadowRunner
+    runner = ShadowRunner(config={"levers": {"needs_count": {"mode": "on"}}})
+    runner._levers = (L.RegisteredLever(lever=NeedsCount(), dist="test"),)
+    body = cached_body()
+    new_raw, info = runner.actuate(json.dumps(body).encode(), body)
+    assert calls, "the lever did run"
+    assert new_raw is None, "a counting lever must not block or mutate the turn"
