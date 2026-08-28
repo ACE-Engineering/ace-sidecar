@@ -773,3 +773,63 @@ def test_the_sidecar_still_works_with_no_lever_package_installed(store, monkeypa
     new_raw, info = runner.actuate(json.dumps(body).encode(), body)
     assert new_raw is None, "no splice mechanics means the original bytes go out"
     assert any("ace-skills is not installed" in r for r in info["refused"])
+
+
+# -- the rail must show a lever that was installed but has produced no number ----------------
+
+
+def test_an_installed_lever_is_visible_even_with_no_measurement(store):
+    """The bug this covers: discovery found the levers, the payload carried them, every mode
+    resolved them — and the rail rendered only simulated headroom and measured rows, so a
+    developer who installed a lever package saw no evidence of it anywhere on the page."""
+    from ace.sidecar.dashboard_render import _lever_rail
+
+    d = {
+        "scorecards": {"standalone": []},
+        "levers": {
+            "status": "all_off",
+            "installed": [
+                {"id": "tail_truncation", "label": "Cap oversized tool results",
+                 "risk": "LOW", "dist": "ace-skills", "requires_content": False},
+                {"id": "image_stripping", "label": "Strip stale screenshots from history",
+                 "risk": "MEDIUM", "dist": "ace-skills", "requires_content": True},
+            ],
+            "modes": {"tail_truncation": "off", "image_stripping": "shadow"},
+            "measured": {},
+        },
+    }
+    html = _lever_rail(d)
+    assert "Cap oversized tool results" in html
+    assert "Strip stale screenshots from history" in html
+    assert "ace-skills" in html, "the providing package must be named"
+    assert "OFF" in html and "SHADOW" in html, "the resolved mode is the actionable part"
+    assert "needs the proxy path" in html, "a content-requiring lever must say so"
+
+
+def test_a_measured_lever_is_not_listed_twice(store):
+    """It already has a row above with a real figure; repeating it as 'installed' would imply
+    two levers."""
+    from ace.sidecar.dashboard_render import _lever_rail
+
+    d = {
+        "scorecards": {"standalone": []},
+        "levers": {
+            "status": "measured",
+            "installed": [{"id": "tail_truncation", "label": "Cap oversized tool results",
+                           "risk": "LOW", "dist": "ace-skills", "requires_content": False}],
+            "modes": {"tail_truncation": "shadow"},
+            "measured": {"by_lever": [
+                {"lever": "tail_truncation", "turns": 3, "removed_tokens": 900, "usd": 0.5,
+                 "unpriced_turns": 0, "revisit_candidates": 0, "revisits": 0,
+                 "revisits_paginated": 0}]},
+        },
+    }
+    html = _lever_rail(d)
+    assert html.count("Cap oversized tool results") == 1
+    assert "MEASURED" in html
+
+
+def test_nothing_installed_adds_nothing(store):
+    from ace.sidecar.dashboard_render import _lever_rail
+    html = _lever_rail({"scorecards": {"standalone": []}, "levers": {}})
+    assert "Installed levers" not in html

@@ -1148,6 +1148,7 @@ body.m-prod .imp .iv{color:#f0a868}
 .modebar button.on{background:#14301f;color:#4ade80}
 .modebar button.on[data-mode=prod]{background:#3a2216;color:#f0a868}
 .modebar button:hover:not(.on){color:#adbac7;background:#12161a}
+.lvh{font:9px/1.4 ui-monospace,monospace;color:#6e7681;letter-spacing:.08em;text-transform:uppercase;margin:9px 0 4px;padding-top:8px;border-top:1px solid #1c2126}
 .modenote{font:10px/1.5 ui-monospace,monospace;color:#6e7681;margin-top:5px}
 """
 
@@ -1249,9 +1250,17 @@ def _mode_js() -> str:
         "<span class='iv'>"+shown+"  ("+pct.toFixed(1)+"%)  via "+(m.by||'')+"</span>";
     });
   }
+  // Persisted, because the page reloads itself every REFRESH_SECONDS. Without this the
+  // control silently snapped back to OFF a few seconds after every click -- which reads as a
+  // broken toggle rather than as the page refreshing, and is exactly how it was reported.
+  // localStorage is the right store for it: a per-viewer display preference, not state
+  // anyone else needs, and it survives the reload that caused the problem.
+  var KEY='ace.skillmode';
+  function save(m){ try{ localStorage.setItem(KEY,m); }catch(e){} }
+  function load(){ try{ return localStorage.getItem(KEY)||'off'; }catch(e){ return 'off'; } }
   document.querySelectorAll('#modebar button').forEach(function(b){
-    b.addEventListener('click',function(){apply(b.dataset.mode);});});
-  apply('off');
+    b.addEventListener('click',function(){ save(b.dataset.mode); apply(b.dataset.mode); });});
+  apply(load());
 })();
 </script>"""
 
@@ -2422,14 +2431,21 @@ def _lever_rail(d: Dict[str, Any]) -> str:
     if not rows:
         # No sessions in scope. The published corpus figures would fit here and would be a
         # lie about this machine, so the rows render with the number withheld.
+        # Installed levers are appended here too. Whether a package registered one has
+        # nothing to do with whether there are sessions to score it against, and an empty
+        # scope was silently hiding the only evidence that a lever package was present.
         return "".join(
-            f"<div class='lv{' f' if i == 0 else ''} dis' title='Nothing to score — no "
-            f"sessions in the selected range.'><div class='lr'>"
-            f"<span class='rk'>{i + 1}</span><span class='ln'>{n}</span>"
-            f"<span class='lu z'>—</span></div>"
-            f"<div class='lb z'><i style='width:0'></i></div>"
-            f"<div class='lm'><span>not scored</span><span>PHASE 2</span></div></div>"
-            for i, n in enumerate(_LEVER_NAMES)
+            [
+                f"<div class='lv{' f' if i == 0 else ''} dis' title='Nothing to score — no "
+                f"sessions in the selected range.'><div class='lr'>"
+                f"<span class='rk'>{i + 1}</span><span class='ln'>{n}</span>"
+                f"<span class='lu z'>—</span></div>"
+                f"<div class='lb z'><i style='width:0'></i></div>"
+                f"<div class='lm'><span>not scored</span><span>PHASE 2</span></div></div>"
+                for i, n in enumerate(_LEVER_NAMES)
+            ]
+            + _measured_rows(d)
+            + _installed_rows(d)
         )
     top = max((r["usd"] for r in rows), default=0.0)
     out = []
@@ -2457,7 +2473,57 @@ def _lever_rail(d: Dict[str, Any]) -> str:
             f"<span class='{risk}'>{risk or '—'}</span></div></div>"
         )
     out.extend(_measured_rows(d))
+    out.extend(_installed_rows(d))
     return "".join(out)
+
+
+def _installed_rows(d: Dict[str, Any]) -> List[str]:
+    """Levers a package registered but which have not produced a number yet.
+
+    Without these an imported skill is INVISIBLE. Discovery finds it, the payload carries it,
+    every mode resolves it — and the rail renders only the simulated headroom rows and the
+    measured ones, so a developer who installs a lever package sees no evidence it worked.
+    That was the state until now: `installed` was in the payload and read by nothing.
+
+    They carry no figure on purpose. A registered lever that is `off` has produced neither a
+    measurement nor a simulation, and inventing a number for it here would put a third claim
+    on a rail that already has to keep two apart. What it shows instead is what a developer
+    actually needs: that the package is present, which levers came with it, their declared
+    risk, and the one word standing between the lever and doing something.
+    """
+    lv = d.get("levers") or {}
+    installed = lv.get("installed") or []
+    if not installed:
+        return []
+    modes = lv.get("modes") or {}
+    scored = {r.get("lever") for r in ((lv.get("measured") or {}).get("by_lever") or [])}
+
+    rows = ["<div class='lvh'>Installed levers</div>"]
+    for item in sorted(installed, key=lambda i: i.get("id") or ""):
+        lid = item.get("id") or "?"
+        if lid in scored:
+            continue                      # already has a measured row above
+        mode = modes.get(lid, "off")
+        risk = escape((item.get("risk") or "").replace("*", ""))
+        needs = " · needs the proxy path" if item.get("requires_content") else ""
+        tip = (
+            f"Registered by {item.get('dist') or 'an installed package'} through the "
+            f"ace.sidecar.levers entry-point group. Mode is {mode.upper()}, read from "
+            f"~/.ace/config.json — installing a lever never enables it. "
+            f"Declared risk {risk or 'unstated'}."
+            + (" This lever needs the actual tool-result bytes, so it only runs on a proxied "
+               "turn, never on a transcript scan." if item.get("requires_content") else "")
+        )
+        cls = "on" if mode != "off" else "z"
+        rows.append(
+            f"<div class='lv dis' title='{escape(tip)}'>"
+            f"<div class='lr'><span class='rk'>&#9679;</span>"
+            f"<span class='ln'>{escape(item.get('label') or lid)}</span>"
+            f"<span class='lu {cls}'>{escape(mode.upper())}</span></div>"
+            f"<div class='lm'><span>{escape(item.get('dist') or '')}{needs}</span>"
+            f"<span class='{risk}'>{risk or '—'}</span></div></div>"
+        )
+    return rows if len(rows) > 1 else []
 
 
 def _measured_rows(d: Dict[str, Any]) -> List[str]:
