@@ -127,11 +127,28 @@ def _rates(model: str):
     return rates_for(model)
 
 
+# Agents differ on whether a path argument arrives bare or wrapped in quotes — of 1485
+# distinct edit targets on a real corpus, 789 were quoted and 86 files appeared in BOTH
+# forms. Unnormalised, `"/a/b.py"` and `/a/b.py` are two different files: the edit counts
+# behind convergence split across the two keys, the thrash denominator inflates, and
+# `.endswith(".py")` fails on the quoted form, so it classifies as neither source nor test.
+_PATH_QUOTES = "\"'`"
+
+
+def _norm_path(v: str) -> str:
+    """A path argument as written, minus the quoting an agent wrapped it in."""
+    v = v.strip()
+    while len(v) >= 2 and v[0] in _PATH_QUOTES and v[-1] == v[0]:
+        v = v[1:-1].strip()
+    return v
+
+
 def _target(tool_input: Dict[str, Any]) -> Optional[str]:
     for k in _TARGET_KEYS:
         v = tool_input.get(k)
         if isinstance(v, str) and v:
-            return hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]
+            # Normalise before hashing, so one file is one digest however it was quoted.
+            return hashlib.sha256(_norm_path(v).encode("utf-8")).hexdigest()[:12]
     return None
 
 
@@ -306,7 +323,7 @@ def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     ):
         v = tool_input.get(k)
         if isinstance(v, str) and v:
-            target_raw = v
+            target_raw = _norm_path(v) or None
             break
 
     cmd = None
@@ -2108,6 +2125,9 @@ _EDIT_ARTIFACT_SUFFIXES = ("walkthrough.md", "implementation_plan.md")
 # A file rewritten this many times inside one session did not converge.
 _THRASH_EDITS = 3
 
+# How many offenders the evidence panel names. The rest are counted, not listed.
+_THRASH_LIST_MAX = 10
+
 
 def _is_edit_artifact(raw_target: str) -> bool:
     return any(m in raw_target for m in _EDIT_ARTIFACT_MARKERS) or raw_target.endswith(
@@ -2156,6 +2176,7 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             "files_edited": 0,
             "thrashed_files_count": 0,
             "thrashed_files_list": [],
+            "thrashed_files_distinct": 0,
             "sessions_with_edits": 0,
             "sessions_with_tests": 0,
         }
@@ -2172,7 +2193,9 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     # fifty-one, and a set of paths cannot express that.
     files_edited = 0
     thrashed_pairs = 0
-    thrashed_paths: set = set()
+    # Per path: the worst single-session edit count, and how many sessions thrashed it.
+    thrash_worst: Dict[str, int] = {}
+    thrash_sessions: Dict[str, int] = {}
 
     for s in sess:
         session_has_edit = False
@@ -2205,7 +2228,8 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             files_edited += 1
             if count >= _THRASH_EDITS:
                 thrashed_pairs += 1
-                thrashed_paths.add(fpath)
+                thrash_worst[fpath] = max(thrash_worst.get(fpath, 0), count)
+                thrash_sessions[fpath] = thrash_sessions.get(fpath, 0) + 1
 
     # Sessions that never edited anything are not evidence either way about test hygiene,
     # so they stay out of the denominator rather than scoring as a free pass. A slice with
@@ -2252,7 +2276,13 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "failed_tool_calls": failed_tool_calls,
         "files_edited": files_edited,
         "thrashed_files_count": thrashed_pairs,
-        "thrashed_files_list": sorted(thrashed_paths)[:10],
+        # Worst first. Alphabetical-then-truncate showed files with 3 edits while hiding
+        # one with 119 — the list is evidence, so it has to lead with the evidence.
+        "thrashed_files_list": [
+            {"path": f, "edits": thrash_worst[f], "sessions": thrash_sessions[f]}
+            for f in sorted(thrash_worst, key=lambda k: (-thrash_worst[k], k))[:_THRASH_LIST_MAX]
+        ],
+        "thrashed_files_distinct": len(thrash_worst),
         "sessions_with_edits": sessions_with_edits,
         "sessions_with_tests": sessions_with_tests,
     }

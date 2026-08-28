@@ -209,7 +209,9 @@ def test_quality_metrics_unverified_and_thrashed_session() -> None:
     assert qm["sessions_with_edits"] == 1
     assert qm["sessions_with_tests"] == 0
     assert qm["thrashed_files_count"] == 1
-    assert "src/flaky.py" in qm["thrashed_files_list"]
+    assert qm["thrashed_files_list"] == [
+        {"path": "src/flaky.py", "edits": 4, "sessions": 1}
+    ]
     # The only file edited was thrashed, so nothing converged.
     assert qm["files_edited"] == 1
     assert qm["edit_convergence_rate"] == 0.0
@@ -431,7 +433,11 @@ def test_quality_metrics_convergence_counts_session_file_pairs() -> None:
     assert qm["files_edited"] == 4
     assert qm["thrashed_files_count"] == 1
     assert qm["edit_convergence_rate"] == 0.75
-    assert qm["thrashed_files_list"] == ["src/hot.py"]
+    # One path, thrashed in one of the four sessions, worst pass count carried through.
+    assert qm["thrashed_files_list"] == [
+        {"path": "src/hot.py", "edits": 4, "sessions": 1}
+    ]
+    assert qm["thrashed_files_distinct"] == 1
 
 
 def test_quality_metrics_excludes_agent_scratch_files() -> None:
@@ -696,3 +702,94 @@ def test_quality_score_weighting() -> None:
     assert qm["quality_score"] == 80
     assert qm["grade"] == "B"
     assert qm["tool_error_rate_pct"] == 10.0
+
+
+def test_thrash_list_is_ranked_by_severity_and_capped() -> None:
+    """The panel is evidence, so the worst offender must not sort below an 'a' filename."""
+    from ace.sidecar.insights import _THRASH_LIST_MAX
+
+    def _edits(path: str, n: int) -> List[Dict[str, Any]]:
+        return [{"name": "Edit", "raw_target": path, "is_edit": True} for _ in range(n)]
+
+    calls: List[Dict[str, Any]] = _edits("zzz_worst.py", 40)
+    # Fifteen mildly thrashed files that all sort ahead of it alphabetically.
+    for i in range(15):
+        calls += _edits(f"aaa_{i:02}.py", 3)
+
+    qm = quality_metrics(
+        [
+            {
+                "session": "s1",
+                "agent_type": "claude",
+                "cwds": ["/test"],
+                "events": [],
+                "turns": [
+                    {
+                        "model": "claude-sonnet-4-6",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                        "calls": calls,
+                    }
+                ],
+            }
+        ]
+    )
+
+    listed = qm["thrashed_files_list"]
+    assert len(listed) == _THRASH_LIST_MAX
+    assert listed[0] == {"path": "zzz_worst.py", "edits": 40, "sessions": 1}
+    assert qm["thrashed_files_distinct"] == 16
+    assert [f["edits"] for f in listed] == sorted(
+        (f["edits"] for f in listed), reverse=True
+    )
+
+
+def test_edit_targets_normalise_quoting() -> None:
+    """`"/a/b.py"` and `/a/b.py` are one file, and the quoted form is still source."""
+    from ace.sidecar.insights import _classify_call, _norm_path
+
+    assert _norm_path('"/repo/src/app.py"') == "/repo/src/app.py"
+    assert _norm_path("'/repo/src/app.py'") == "/repo/src/app.py"
+    assert _norm_path("  /repo/src/app.py  ") == "/repo/src/app.py"
+
+    quoted = _classify_call("Edit", {"file_path": '"/repo/src/app.py"'})
+    bare = _classify_call("Edit", {"file_path": "/repo/src/app.py"})
+    assert quoted["raw_target"] == bare["raw_target"]
+    # The trailing quote used to defeat the extension check entirely.
+    assert quoted["is_src_file"] is True
+    assert quoted["target"] == bare["target"] if "target" in quoted else True
+
+    # Two spellings of one file are one file, and together they thrash it.
+    calls = [
+        {"name": "Edit", "raw_target": _classify_call("Edit", {"file_path": p})["raw_target"], "is_edit": True}
+        for p in ('"/repo/a.py"', "/repo/a.py", '"/repo/a.py"')
+    ]
+    qm = quality_metrics(
+        [
+            {
+                "session": "s1",
+                "agent_type": "claude",
+                "cwds": ["/test"],
+                "events": [],
+                "turns": [
+                    {
+                        "model": "claude-sonnet-4-6",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                        "calls": calls,
+                    }
+                ],
+            }
+        ]
+    )
+    assert qm["files_edited"] == 1
+    assert qm["thrashed_files_count"] == 1
+    assert qm["edit_convergence_rate"] == 0.0

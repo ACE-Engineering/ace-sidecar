@@ -24,6 +24,7 @@ from urllib.parse import quote
 from ace.sidecar.insights import (
     MIN_QUALITY_EVAL_SESSIONS,
     MIN_QUALITY_EVAL_TURNS,
+    _THRASH_EDITS,
 )
 
 try:
@@ -972,17 +973,33 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         ),
     ]
 
+    # The evidence behind the convergence tile: which files an agent could not settle, worst
+    # first, each with the count that makes it worth looking at. A path alone gives a reader
+    # no way to tell a file that took three passes from one that took a hundred.
     thrashed_files_list = qm.get("thrashed_files_list") or []
     thrash_html = ""
     if thrashed_files_list:
-        thrashed_items = "".join(
-            f"<li><code>{escape(_mask_home(f))}</code></li>"
-            for f in thrashed_files_list
+        rows = []
+        for f in thrashed_files_list:
+            n = f.get("edits", 0)
+            n_sess = f.get("sessions", 1)
+            sess_note = "" if n_sess <= 1 else f", in {n_sess} sessions"
+            rows.append(
+                f"<li><b style='color:var(--gold);'>{n}\u00d7</b> "
+                f"<code>{escape(_mask_home(str(f.get('path', ''))))}</code>"
+                f"<span style='color:var(--ink-4);'> — worst single session{escape(sess_note)}</span></li>"
+            )
+        distinct = qm.get("thrashed_files_distinct", len(thrashed_files_list))
+        more = (
+            f" · showing {len(thrashed_files_list)} of {distinct}"
+            if distinct > len(thrashed_files_list)
+            else ""
         )
         thrash_html = (
             f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid #3d3014;border-radius:4px;'>"
-            f"<b style='color:var(--gold);font-size:12px;'>⚠️ Repeatedly Modified Files (Thrashing Detected):</b>"
-            f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{thrashed_items}</ul>"
+            f"<b style='color:var(--gold);font-size:12px;'>\u26a0\ufe0f Files the agent could not settle "
+            f"({_THRASH_EDITS}+ edits in one session){escape(more)}:</b>"
+            f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{''.join(rows)}</ul>"
             f"</div>"
         )
 
