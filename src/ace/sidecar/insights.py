@@ -2047,7 +2047,14 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
                     session_has_edit = True
                     total_edits += 1
                     raw_t = c.get("raw_target") or c.get("target") or "unknown"
-                    session_file_edits[raw_t] = session_file_edits.get(raw_t, 0) + 1
+                    is_artifact = (
+                        "/.gemini/antigravity/brain/" in raw_t
+                        or "/.system_generated/" in raw_t
+                        or raw_t.endswith("walkthrough.md")
+                        or raw_t.endswith("implementation_plan.md")
+                    )
+                    if not is_artifact:
+                        session_file_edits[raw_t] = session_file_edits.get(raw_t, 0) + 1
                     if c.get("is_test_file"):
                         test_edits_count += 1
                     elif c.get("is_src_file"):

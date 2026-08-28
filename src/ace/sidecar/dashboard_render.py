@@ -879,8 +879,11 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
     matrix_table = ""
     if breakdown_rows:
         matrix_table = (
-            f"<div style='margin-top:14px;'>"
-            f"<table style='margin-top:6px;'>"
+            f"<div style='margin-top:16px;'>"
+            f"<div style='font-size:12px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:8px;'>"
+            f"ENGINE &amp; MODEL RELIABILITY COMPARISON"
+            f"</div>"
+            f"<table style='margin-top:4px;width:100%;'>"
             f"<tr><th>engine / model</th><th>score</th><th class='num'>verification</th><th class='num'>first-pass success</th>"
             f"<th class='num'>thrash files</th><th class='num'>healing turns</th><th class='num'>sessions</th></tr>"
             f"{''.join(breakdown_rows)}"
