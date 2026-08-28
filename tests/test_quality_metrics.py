@@ -8,6 +8,7 @@ import pytest
 
 from ace.sidecar.dashboard_render import render
 from ace.sidecar.insights import (
+    MIN_QUALITY_EVAL_TURNS,
     _classify_call,
     _build_payload,
     format_prometheus_metrics,
@@ -68,11 +69,12 @@ def test_classify_call_edits_and_views() -> None:
 def test_quality_metrics_empty() -> None:
     qm = quality_metrics([])
     assert qm["available"] is False
-    assert qm["quality_score"] == 100
-    assert qm["grade"] == "A"
-    assert qm["verification_rate_pct"] == 100.0
-    assert qm["first_pass_success_rate_pct"] == 100.0
+    assert qm["scored"] is False
+    # Nothing observed is not a perfect score. An empty scope reports no score at all.
+    assert qm["quality_score"] is None
+    assert qm["grade"] == "—"
     assert qm["thrashed_files_count"] == 0
+    assert qm["files_edited"] == 0
 
 
 def test_quality_metrics_clean_verified_session() -> None:
@@ -128,15 +130,18 @@ def test_quality_metrics_clean_verified_session() -> None:
     ]
     qm = quality_metrics(sess)
     assert qm["available"] is True
+    assert qm["scored"] is True
     assert qm["verification_rate"] == 1.0
     assert qm["verification_rate_pct"] == 100.0
-    assert qm["first_pass_success_rate"] == 1.0
+    assert qm["tool_success_rate"] == 1.0
     assert qm["tool_error_rate"] == 0.0
     assert qm["thrashed_files_count"] == 0
-    assert qm["redundant_reads_count"] == 0
+    # Two distinct files, each edited once, in one session.
+    assert qm["files_edited"] == 2
+    assert qm["edit_convergence_rate"] == 1.0
     assert qm["sessions_with_edits"] == 1
     assert qm["sessions_with_tests"] == 1
-    assert qm["quality_score"] >= 90
+    assert qm["quality_score"] == 100
     assert qm["grade"] == "A"
 
 
@@ -199,15 +204,19 @@ def test_quality_metrics_unverified_and_thrashed_session() -> None:
     ]
     qm = quality_metrics(sess)
     assert qm["available"] is True
+    assert qm["scored"] is True
     assert qm["verification_rate"] == 0.0  # Zero tests run
     assert qm["sessions_with_edits"] == 1
     assert qm["sessions_with_tests"] == 0
     assert qm["thrashed_files_count"] == 1
     assert "src/flaky.py" in qm["thrashed_files_list"]
-    assert qm["redundant_reads_count"] == 1
+    # The only file edited was thrashed, so nothing converged.
+    assert qm["files_edited"] == 1
+    assert qm["edit_convergence_rate"] == 0.0
     assert qm["tool_error_rate"] > 0.0
-    assert qm["quality_score"] < 70
-    assert qm["grade"] in ("C", "D", "F")
+    # Verification 0 and convergence 0 leave only the 20% tool-success weight.
+    assert qm["quality_score"] < 30
+    assert qm["grade"] == "F"
 
 
 def test_quality_in_payload_and_prometheus() -> None:
@@ -258,90 +267,95 @@ def test_quality_in_payload_and_prometheus() -> None:
     qm = payload["quality"]
     assert qm["available"] is True
     assert qm["verification_rate_pct"] == 100.0
-    assert qm["quality_score"] >= 80
+    assert qm["quality_score"] == 100
 
     # Prometheus export check
     prom_text = format_prometheus_metrics(payload)
-    assert "ace_quality_score" in prom_text
+    assert 'ace_quality_score{agent="all"} 100' in prom_text
     assert 'ace_quality_verification_rate{agent="all"} 1.0' in prom_text
-    assert 'ace_quality_first_pass_success_rate{agent="all"} 1.0' in prom_text
+    assert 'ace_quality_edit_convergence_rate{agent="all"} 1.0' in prom_text
+    assert 'ace_quality_tool_success_rate{agent="all"} 1.0' in prom_text
     assert "ace_quality_thrashed_files_total 0" in prom_text
-    assert "ace_quality_redundant_reads_total 0" in prom_text
+    assert "ace_quality_files_edited_total 1" in prom_text
 
     # Render dashboard check
     html = render(payload)
     assert "CODE QUALITY &amp; RELIABILITY" in html or "CODE QUALITY & RELIABILITY" in html
     assert "quality_score" in html
     assert "verification_rate" in html
-    assert "first_pass_success" in html
+    assert "edit_convergence" in html
+    assert "tool_success" in html
 
 
-def test_quality_metrics_by_agent_and_model() -> None:
-    # 20 turns per session to satisfy MIN_QUALITY_EVAL_TURNS
-    claude_turns = [
+def _turns(model: str, calls_first: List[Dict[str, Any]], n: int = 25) -> List[Dict[str, Any]]:
+    """``n`` turns of one model, the tool calls all on the first."""
+    return [
         {
-            "model": "claude-sonnet-4-6",
+            "model": model,
             "input_tokens": 100,
             "output_tokens": 20,
             "cache_read_input_tokens": 80,
             "cache_creation_input_tokens": 0,
             "ephemeral_5m_input_tokens": 0,
             "ephemeral_1h_input_tokens": 0,
-            "calls": [
-                {"name": "Edit", "raw_target": "src/a.py", "is_edit": True, "is_src_file": True},
-                {"name": "Bash", "command": "pytest", "is_test_run": True, "is_error": False},
-            ] if i == 0 else [],
+            "calls": calls_first if i == 0 else [],
         }
-        for i in range(20)
+        for i in range(n)
     ]
 
-    agy_turns = [
-        {
-            "model": "gemini-3.6-flash",
-            "input_tokens": 50,
-            "output_tokens": 10,
-            "cache_read_input_tokens": 30,
-            "cache_creation_input_tokens": 0,
-            "ephemeral_5m_input_tokens": 0,
-            "ephemeral_1h_input_tokens": 0,
-            "calls": [
-                {"name": "write_to_file", "raw_target": "src/b.py", "is_edit": True, "is_src_file": True, "is_error": True},
-            ] if i == 0 else [],
-        }
-        for i in range(20)
-    ]
 
-    sess: List[Dict[str, Any]] = [
-        {
-            "session": "s1",
-            "agent_type": "claude",
-            "cwds": ["/test"],
-            "turns": claude_turns,
-            "events": [],
-        },
-        {
-            "session": "s2",
-            "agent_type": "antigravity",
-            "cwds": ["/test"],
-            "turns": agy_turns,
-            "events": [],
-        },
-    ]
+def test_quality_metrics_by_agent_and_model() -> None:
+    # A row needs MIN_QUALITY_EVAL_SESSIONS sessions *and* MIN_QUALITY_EVAL_TURNS turns:
+    # 5 sessions x 25 turns clears both for each engine.
+    sess: List[Dict[str, Any]] = []
+    for i in range(5):
+        sess.append(
+            {
+                "session": f"c{i}",
+                "agent_type": "claude",
+                "cwds": ["/test"],
+                "events": [],
+                "turns": _turns(
+                    "claude-sonnet-4-6",
+                    [
+                        {"name": "Edit", "raw_target": f"src/a{i}.py", "is_edit": True, "is_src_file": True},
+                        {"name": "Bash", "command": "pytest", "is_test_run": True, "is_error": False},
+                    ],
+                ),
+            }
+        )
+        sess.append(
+            {
+                "session": f"g{i}",
+                "agent_type": "antigravity",
+                "cwds": ["/test"],
+                "events": [],
+                "turns": _turns(
+                    "gemini-3.6-flash",
+                    [
+                        {"name": "write_to_file", "raw_target": f"src/b{i}.py", "is_edit": True, "is_src_file": True, "is_error": True},
+                    ],
+                ),
+            }
+        )
 
     qm = quality_metrics(sess)
-    assert "by_agent" in qm
     assert "claude" in qm["by_agent"]
     assert "antigravity" in qm["by_agent"]
 
     claude_q = qm["by_agent"]["claude"]
+    assert claude_q["sessions"] == 5
     assert claude_q["verification_rate_pct"] == 100.0
-    assert claude_q["quality_score"] >= 85
+    assert claude_q["edit_convergence_rate_pct"] == 100.0
+    assert claude_q["quality_score"] == 100
 
     agy_q = qm["by_agent"]["antigravity"]
     assert agy_q["verification_rate_pct"] == 0.0
-    assert agy_q["first_pass_success_rate_pct"] == 0.0
+    assert agy_q["tool_success_rate_pct"] == 0.0
+    # Every edit landed first try, so convergence is clean even though nothing verified.
+    assert agy_q["edit_convergence_rate_pct"] == 100.0
+    assert agy_q["quality_score"] == 35
 
-    assert "by_model" in qm
     models = [m["model"] for m in qm["by_model"]]
     assert "claude-sonnet-4-6" in models
     assert "gemini-3.6-flash" in models
@@ -353,10 +367,109 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert "claude-sonnet-4-6" in html
     assert "gemini-3.6-flash" in html
     assert "ENGINE / MODEL" in html or "Engine / model" in html
+    assert "Convergence" in html
+
+
+def test_quality_metrics_unscored_slice_reports_no_score() -> None:
+    """A read-only slice has no code quality to report, and must not read as a perfect one."""
+    sess: List[Dict[str, Any]] = [
+        {
+            "session": f"r{i}",
+            "agent_type": "claude",
+            "cwds": ["/test"],
+            "events": [],
+            "turns": _turns(
+                "claude-sonnet-4-6",
+                [{"name": "view_file", "raw_target": "src/server.py", "is_view": True}],
+            ),
+        }
+        for i in range(5)
+    ]
+
+    qm = quality_metrics(sess)
+    assert qm["available"] is True
+    assert qm["scored"] is False
+    assert qm["quality_score"] is None
+    assert qm["grade"] == "—"
+    assert qm["sessions_with_edits"] == 0
+
+    payload = _build_payload(sess, capture=None, range_key="all", agent="all", store_path=None)
+    # No fabricated series for a slice with nothing to score.
+    assert 'ace_quality_score{agent="all"}' not in format_prometheus_metrics(payload)
+    html = render(payload)
+    assert "no editing sessions in scope" in html
+
+
+def test_quality_metrics_convergence_counts_session_file_pairs() -> None:
+    """A file thrashed once and clean elsewhere is one bad pair, not one bad file."""
+
+    def _sess(sid: str, edits: int) -> Dict[str, Any]:
+        return {
+            "session": sid,
+            "agent_type": "claude",
+            "cwds": ["/test"],
+            "events": [],
+            "turns": [
+                {
+                    "model": "claude-sonnet-4-6",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": [
+                        {"name": "Edit", "raw_target": "src/hot.py", "is_edit": True, "is_src_file": True}
+                        for _ in range(edits)
+                    ],
+                }
+            ],
+        }
+
+    # Same path across four sessions; only one of them thrashed it.
+    qm = quality_metrics([_sess("s1", 4), _sess("s2", 1), _sess("s3", 1), _sess("s4", 1)])
+    assert qm["files_edited"] == 4
+    assert qm["thrashed_files_count"] == 1
+    assert qm["edit_convergence_rate"] == 0.75
+    assert qm["thrashed_files_list"] == ["src/hot.py"]
+
+
+def test_quality_metrics_excludes_agent_scratch_files() -> None:
+    """Antigravity plan scratch files go through the edit tools but are not code."""
+    sess: List[Dict[str, Any]] = [
+        {
+            "session": "s1",
+            "agent_type": "antigravity",
+            "cwds": ["/test"],
+            "events": [],
+            "turns": [
+                {
+                    "model": "gemini-3.6-flash",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": [
+                        {"name": "write_to_file", "raw_target": "/home/u/.gemini/antigravity/brain/x/notes.md", "is_edit": True},
+                        {"name": "write_to_file", "raw_target": "/repo/implementation_plan.md", "is_edit": True},
+                        {"name": "write_to_file", "raw_target": "/repo/walkthrough.md", "is_edit": True},
+                    ] * 3,
+                }
+            ],
+        }
+    ]
+    qm = quality_metrics(sess)
+    # The session still counts as editing, but no scratch file enters convergence.
+    assert qm["sessions_with_edits"] == 1
+    assert qm["files_edited"] == 0
+    assert qm["thrashed_files_count"] == 0
+    assert qm["edit_convergence_rate"] == 1.0
 
 
 def test_quality_metrics_turn_threshold_filter() -> None:
-    # Session with only 5 turns should NOT be evaluated in by_agent or by_model
+    # One short session clears neither gate, so it gets no comparison row of its own.
     short_sess = [
         {
             "session": "short_s1",
@@ -373,7 +486,7 @@ def test_quality_metrics_turn_threshold_filter() -> None:
                     "ephemeral_1h_input_tokens": 0,
                     "calls": [],
                 }
-                for _ in range(5)  # only 5 turns < 20
+                for _ in range(5)  # 1 session, 5 turns
             ],
             "events": [],
         }
@@ -382,6 +495,11 @@ def test_quality_metrics_turn_threshold_filter() -> None:
     qm = quality_metrics(short_sess)
     assert "codex" not in qm["by_agent"]
     assert len(qm["by_model"]) == 0
+
+    # Turns alone are not enough either: one very long session is still one session.
+    long_single = [dict(short_sess[0], turns=short_sess[0]["turns"] * 40)]
+    assert len(long_single[0]["turns"]) > MIN_QUALITY_EVAL_TURNS
+    assert "codex" not in quality_metrics(long_single)["by_agent"]
 
 
 def test_quality_metrics_by_task_category() -> None:
@@ -521,7 +639,9 @@ def test_quality_metrics_by_task_category() -> None:
     payload = _build_payload(sess_all, capture=None, range_key="all", agent="all", store_path=None)
     prom_text = format_prometheus_metrics(payload)
     assert 'ace_quality_category_score{category="ui"}' in prom_text
-    assert 'ace_quality_category_completion_rate{category="ui"}' in prom_text
+    assert 'ace_quality_category_verification_rate{category="ui"}' in prom_text
+    # The research session edits nothing, so it contributes no score series.
+    assert 'ace_quality_category_score{category="research"}' not in prom_text
 
     # Render dashboard
     html = render(payload)
@@ -532,121 +652,47 @@ def test_quality_metrics_by_task_category() -> None:
     assert "UI &amp; Frontend" in html or "UI & Frontend" in html
 
 
-def test_extended_quality_metrics_turns_time_fixes_verbosity() -> None:
-    from ace.sidecar.insights import _count_comment_and_code_lines, _classify_call
-
-    # Test comment and code line parsing
-    code_sample = """# Header comment
-def solve():
-    // inline comment
-    x = 10
-    y = 20
-    return x + y
-"""
-    c_cnt, k_cnt = _count_comment_and_code_lines(code_sample)
-    assert c_cnt == 2
-    assert k_cnt == 4
-
-    # Test _classify_call with CodeContent
-    call_info = _classify_call("write_to_file", {"TargetFile": "src/main.py", "CodeContent": code_sample})
-    assert call_info["is_edit"] is True
-    assert call_info["comment_lines"] == 2
-    assert call_info["code_lines"] == 4
-
-    # Test session with multiple turns, follow-up edits on same file, timestamps, output tokens
-    sess_complex = [
+def test_quality_score_weighting() -> None:
+    """The composite is exactly the three published weights over the three rates."""
+    sess: List[Dict[str, Any]] = [
         {
-            "session": "sess_1",
+            "session": "s1",
             "agent_type": "claude",
             "cwds": ["/test"],
-            "events": [
-                (1000.0, "user_turn", {}, 1000.0),
-                (1120.0, "assistant_turn", {}, 1120.0),  # 120s duration = 2.0 mins
-            ],
+            "events": [],
             "turns": [
                 {
-                    "input_tokens": 100,
+                    "model": "claude-sonnet-4-6",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
                     "cache_read_input_tokens": 0,
                     "cache_creation_input_tokens": 0,
                     "ephemeral_5m_input_tokens": 0,
                     "ephemeral_1h_input_tokens": 0,
-                    "output_tokens": 200,
-                    "model": "claude-sonnet-4-6",
                     "calls": [
-                        {
-                            "name": "write_to_file",
-                            "raw_target": "src/app.py",
-                            "is_edit": True,
-                            "is_src_file": True,
-                            "comment_lines": 5,
-                            "code_lines": 20,
-                        },
-                        {
-                            "name": "write_to_file",
-                            "raw_target": "src/app.py",  # Re-edit = 1 follow-up fix
-                            "is_edit": True,
-                            "is_src_file": True,
-                            "comment_lines": 3,
-                            "code_lines": 10,
-                        },
-                        {
-                            "name": "Bash",
-                            "command": "pytest",
-                            "is_test_run": True,
-                        },
+                        # Four files: two thrashed, two clean -> convergence 0.5.
+                        {"name": "Edit", "raw_target": "a.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "a.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "a.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "b.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "b.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "b.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "c.py", "is_edit": True},
+                        {"name": "Edit", "raw_target": "d.py", "is_edit": True},
+                        # 8 edits + 2 more calls, one of which errors -> tool success 0.9.
+                        {"name": "Bash", "command": "pytest", "is_test_run": True},
+                        {"name": "Bash", "command": "ls", "is_error": True},
                     ],
-                },
-                {
-                    "input_tokens": 100,
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "ephemeral_5m_input_tokens": 0,
-                    "ephemeral_1h_input_tokens": 0,
-                    "output_tokens": 100,
-                    "model": "claude-sonnet-4-6",
-                    "calls": [],
-                },
+                }
             ],
         }
     ]
-
-    qm = quality_metrics(sess_complex)
-
-    # 1. Turns per completion
-    assert qm["turns_per_completion_avg"] == 2.0
-    assert qm["clean_completed_sessions"] == 1
-
-    # 2. Time taken per completion
-    assert qm["duration_seconds_per_completion_avg"] == 120.0
-    assert qm["duration_minutes_per_completion_avg"] == 2.0
-
-    # 3. Follow-up fixes on same code
-    assert qm["followup_code_fixes_count"] == 1
-    assert qm["followup_code_fix_rate_pct"] == 50.0  # 1 fix out of (1 unique file + 1 fix)
-
-    # 4. Verbosity & Comment Ratio
-    # Total output tokens = 300 across 2 turns = 150.0 tok/turn
-    assert qm["verbosity_tokens_per_turn"] == 150.0
-    assert qm["verbosity_level"] == "Moderate"
-    # Total comments = 8, Total code = 30 -> ratio = 8/30 = 0.27
-    assert qm["comment_to_code_ratio"] == 0.27
-    assert qm["comment_density_pct"] == round(8 / 38 * 100.0, 1)
-
-    # Check Prometheus formatting
-    payload = _build_payload(sess_complex, capture=None, range_key="all", agent="all", store_path=None)
-    prom_text = format_prometheus_metrics(payload)
-    assert "ace_quality_turns_per_completion_avg 2.0" in prom_text
-    assert "ace_quality_duration_seconds_per_completion_avg 120.0" in prom_text
-    assert "ace_quality_followup_code_fixes_total 1" in prom_text
-    assert "ace_quality_comment_to_code_ratio 0.27" in prom_text
-    assert "ace_quality_verbosity_tokens_per_turn 150.0" in prom_text
-
-    # Check UI rendering
-    html = render(payload)
-    assert "TURNS / TASK" in html or "turns_per_task" in html
-    assert "TIME / TASK" in html or "time_per_task" in html
-    assert "FOLLOW-UP FIXES" in html or "followup_fixes" in html
-    assert "CODE COMMENT DENSITY" in html or "comment_ratio" in html
-    assert "VERBOSITY LEVEL" in html or "verbosity" in html
-
-
+    qm = quality_metrics(sess)
+    assert qm["verification_rate"] == 1.0  # the one editing session ran pytest
+    assert qm["edit_convergence_rate"] == 0.5
+    assert qm["tool_success_rate"] == 0.9
+    # 0.45(1.0) + 0.35(0.5) + 0.20(0.9) = 0.805 -> 80 (int(round()) is half-to-even)
+    assert qm["quality_score"] == int(round((0.45 * 1.0 + 0.35 * 0.5 + 0.20 * 0.9) * 100.0))
+    assert qm["quality_score"] == 80
+    assert qm["grade"] == "B"
+    assert qm["tool_error_rate_pct"] == 10.0

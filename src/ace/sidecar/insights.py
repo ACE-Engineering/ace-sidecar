@@ -292,24 +292,6 @@ def _classify_session_task_category(session: Dict[str, Any]) -> str:
     return TASK_CAT_BACKEND
 
 
-_COMMENT_LINE_RE = re.compile(r"^\s*(#|//|/\*|\*|\*/|\"\"\"|\'\'\'|--|<!--)")
-
-
-def _count_comment_and_code_lines(text: str) -> Tuple[int, int]:
-    """Counts comment lines and executable code lines in a code snippet."""
-    if not text:
-        return 0, 0
-    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
-    c_cnt = 0
-    k_cnt = 0
-    for line in lines:
-        if _COMMENT_LINE_RE.match(line):
-            c_cnt += 1
-        else:
-            k_cnt += 1
-    return c_cnt, k_cnt
-
-
 def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     target_raw = None
     for k in (
@@ -369,23 +351,6 @@ def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         and not is_test_file
     )
 
-    edit_content = ""
-    for k in (
-        "CodeContent",
-        "ReplacementContent",
-        "new_string",
-        "content",
-        "text",
-        "replacementContent",
-        "new_content",
-    ):
-        v = tool_input.get(k)
-        if isinstance(v, str) and v:
-            edit_content = v
-            break
-
-    c_lines, k_lines = _count_comment_and_code_lines(edit_content) if is_edit else (0, 0)
-
     return {
         "raw_target": target_raw,
         "is_test_run": is_test_run,
@@ -393,8 +358,6 @@ def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         "is_view": is_view,
         "is_test_file": is_test_file,
         "is_src_file": is_src_file,
-        "comment_lines": c_lines,
-        "code_lines": k_lines,
     }
 
 
@@ -2117,95 +2080,110 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 # ------------------------------------------------- code quality & reliability metrics
 
+# Three signals survive the audit, because only three of them are both derivable from a
+# transcript and actually about *code* quality:
+#
+#   verification   did the agent check its own work (tests/lint) after editing?
+#   convergence    did an edit land, or did the same file get rewritten over and over?
+#   tool success   did the calls it made actually run?
+#
+# Everything else that used to live here measured something other than quality (output
+# tokens per turn, comment-to-code ratio), restated one of these three under another name
+# (task completion required verification, so it double-counted it), or could not be
+# computed correctly from a session record at all (wall-clock per "task" is session span
+# including idle; per-model it was the *whole* session's span attributed to one model).
+
+_QUALITY_WEIGHTS = (
+    ("verification_rate", 0.45),
+    ("edit_convergence_rate", 0.35),
+    ("tool_success_rate", 0.20),
+)
+
+# Antigravity writes its own planning scratch files through the same edit tools it uses on
+# the workspace. Those are agent bookkeeping, not code, and counting them makes every
+# Antigravity session look like it thrashed.
+_EDIT_ARTIFACT_MARKERS = ("/.gemini/antigravity/brain/", "/.system_generated/")
+_EDIT_ARTIFACT_SUFFIXES = ("walkthrough.md", "implementation_plan.md")
+
+# A file rewritten this many times inside one session did not converge.
+_THRASH_EDITS = 3
+
+
+def _is_edit_artifact(raw_target: str) -> bool:
+    return any(m in raw_target for m in _EDIT_ARTIFACT_MARKERS) or raw_target.endswith(
+        _EDIT_ARTIFACT_SUFFIXES
+    )
+
+
+def _grade(score: int) -> str:
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
+
 
 def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
-    total_sessions = len(sess)
-    if not total_sessions:
+    """The three rates, the counts they divide, and the composite over them.
+
+    Callers may pass *projections* — session-shaped dicts holding only the turns of one
+    model. Every figure here is derived from ``turns`` alone for that reason: a projection
+    carries no honest session span, and anything derived from one would be the containing
+    session's, not the model's.
+    """
+    if not sess:
         return {
             "available": False,
-            "quality_score": 100,
-            "grade": "A",
-            "task_completion_rate": 1.0,
-            "task_completion_rate_pct": 100.0,
+            "scored": False,
+            "quality_score": None,
+            "grade": "—",
             "verification_rate": 1.0,
             "verification_rate_pct": 100.0,
-            "first_pass_success_rate": 1.0,
-            "first_pass_success_rate_pct": 100.0,
+            "edit_convergence_rate": 1.0,
+            "edit_convergence_rate_pct": 100.0,
+            "tool_success_rate": 1.0,
+            "tool_success_rate_pct": 100.0,
             "tool_error_rate": 0.0,
             "tool_error_rate_pct": 0.0,
             "total_edits": 0,
             "total_tests": 0,
             "total_tool_calls": 0,
+            "failed_tool_calls": 0,
+            "files_edited": 0,
             "thrashed_files_count": 0,
             "thrashed_files_list": [],
-            "rework_thrash_rate": 0.0,
-            "rework_thrash_rate_pct": 0.0,
-            "edit_stability": 1.0,
-            "edit_stability_pct": 100.0,
-            "redundant_reads_count": 0,
-            "avg_error_recovery_turns": 1.0,
-            "test_to_code_ratio": 1.0,
             "sessions_with_edits": 0,
             "sessions_with_tests": 0,
-            "clean_completed_sessions": 0,
-            "turns_per_completion_avg": 1.0,
-            "duration_seconds_per_completion_avg": 0.0,
-            "duration_minutes_per_completion_avg": 0.0,
-            "followup_code_fixes_count": 0,
-            "followup_code_fix_rate_pct": 0.0,
-            "verbosity_tokens_per_turn": 0.0,
-            "verbosity_level": "Concise",
-            "comment_to_code_ratio": 0.0,
-            "comment_density_pct": 0.0,
-            "total_comment_lines": 0,
-            "total_code_lines": 0,
         }
 
     sessions_with_edits = 0
     sessions_with_tests = 0
-    clean_completed_sessions = 0
     total_edits = 0
     total_tests = 0
     total_tool_calls = 0
     failed_tool_calls = 0
-    redundant_reads_count = 0
-    test_edits_count = 0
-    src_edits_count = 0
 
-    all_thrashed_files = set()
-    recovery_turns_list = []
-    completed_turns_list: List[int] = []
-    completed_durations_list: List[float] = []
-
-    total_unique_files_edited = 0
-    total_followup_code_fixes = 0
-
-    total_output_tokens = 0
-    total_turns_count = 0
-    total_comment_lines = 0
-    total_code_lines = 0
+    # Convergence is counted over (session, file) pairs, not over distinct paths. The same
+    # file touched cleanly in fifty sessions and thrashed in one is one bad pair out of
+    # fifty-one, and a set of paths cannot express that.
+    files_edited = 0
+    thrashed_pairs = 0
+    thrashed_paths: set = set()
 
     for s in sess:
-        turns = s.get("turns") or []
-        events = s.get("events") or []
         session_has_edit = False
         session_has_test = False
         session_file_edits: Dict[str, int] = {}
-        last_view_sig: Optional[str] = None
-        pending_error_turn: Optional[int] = None
-        last_turn_had_error = False
 
-        total_turns_count += len(turns)
-
-        for turn_idx, t in enumerate(turns):
-            total_output_tokens += int(t.get("output_tokens") or 0)
-            turn_has_error = False
+        for t in s.get("turns") or []:
             for c in t.get("calls") or []:
                 total_tool_calls += 1
-                is_err = bool(c.get("is_error"))
-                if is_err:
+                if c.get("is_error"):
                     failed_tool_calls += 1
-                    turn_has_error = True
 
                 if c.get("is_test_run"):
                     session_has_test = True
@@ -2215,237 +2193,97 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
                     session_has_edit = True
                     total_edits += 1
                     raw_t = c.get("raw_target") or c.get("target") or "unknown"
-                    is_artifact = (
-                        "/.gemini/antigravity/brain/" in raw_t
-                        or "/.system_generated/" in raw_t
-                        or raw_t.endswith("walkthrough.md")
-                        or raw_t.endswith("implementation_plan.md")
-                    )
-                    if not is_artifact:
+                    if not _is_edit_artifact(raw_t):
                         session_file_edits[raw_t] = session_file_edits.get(raw_t, 0) + 1
-                    if c.get("is_test_file"):
-                        test_edits_count += 1
-                    elif c.get("is_src_file"):
-                        src_edits_count += 1
 
-                    total_comment_lines += int(c.get("comment_lines") or 0)
-                    total_code_lines += int(c.get("code_lines") or 0)
-
-                    # A file edit invalidates previous view cache
-                    last_view_sig = None
-
-                if c.get("is_view"):
-                    view_sig = (
-                        c.get("sig")
-                        or c.get("digest")
-                        or c.get("raw_target")
-                        or c.get("target")
-                    )
-                    if view_sig and view_sig == last_view_sig:
-                        redundant_reads_count += 1
-                    last_view_sig = view_sig
-
-            if turn_has_error:
-                if pending_error_turn is None:
-                    pending_error_turn = turn_idx
-            elif pending_error_turn is not None:
-                recovery_turns_list.append(max(1, turn_idx - pending_error_turn))
-                pending_error_turn = None
-
-        if turns and any(c.get("is_error") for c in turns[-1].get("calls") or []):
-            last_turn_had_error = True
-
-        is_clean_completion = False
         if session_has_edit:
             sessions_with_edits += 1
-            if session_has_test and not last_turn_had_error:
-                clean_completed_sessions += 1
-                is_clean_completion = True
-        else:
-            if not last_turn_had_error:
-                clean_completed_sessions += 1
-                is_clean_completion = True
-
-        if is_clean_completion:
-            completed_turns_list.append(len(turns))
-            if events and len(events) >= 2:
-                dur = max(0.0, float(events[-1][0]) - float(events[0][0]))
-                completed_durations_list.append(dur)
-
         if session_has_test:
             sessions_with_tests += 1
 
         for fpath, count in session_file_edits.items():
-            total_unique_files_edited += 1
-            if count > 1:
-                total_followup_code_fixes += (count - 1)
-            if count >= 3:
-                all_thrashed_files.add(fpath)
+            files_edited += 1
+            if count >= _THRASH_EDITS:
+                thrashed_pairs += 1
+                thrashed_paths.add(fpath)
 
-    thrashed_files_count = len(all_thrashed_files)
+    # Sessions that never edited anything are not evidence either way about test hygiene,
+    # so they stay out of the denominator rather than scoring as a free pass. A slice with
+    # no editing session at all — read-only research, say — has no code quality to report:
+    # it is marked unscored rather than handed the 100 that empty denominators produce.
+    scored = sessions_with_edits > 0
     verification_rate = (
-        (sessions_with_tests / sessions_with_edits)
-        if sessions_with_edits > 0
-        else (1.0 if not total_edits else 0.0)
+        (sessions_with_tests / sessions_with_edits) if sessions_with_edits else 1.0
     )
-
-    first_pass_success_rate = (
+    edit_convergence_rate = (
+        (1.0 - thrashed_pairs / files_edited) if files_edited else 1.0
+    )
+    tool_success_rate = (
         ((total_tool_calls - failed_tool_calls) / total_tool_calls)
-        if total_tool_calls > 0
+        if total_tool_calls
         else 1.0
     )
+    tool_error_rate = 1.0 - tool_success_rate
 
-    tool_error_rate = (
-        (failed_tool_calls / total_tool_calls)
-        if total_tool_calls > 0
-        else 0.0
-    )
-
-    task_completion_rate = (
-        (clean_completed_sessions / total_sessions)
-        if total_sessions > 0
-        else 1.0
-    )
-
-    rework_thrash_rate = (
-        (thrashed_files_count / max(1, len(all_thrashed_files) + total_edits))
-        if total_edits > 0
-        else 0.0
-    )
-
-    thrash_ratio = (thrashed_files_count / max(1, sessions_with_edits)) if sessions_with_edits > 0 else 0.0
-    edit_stability = max(0.0, 1.0 - (thrash_ratio * 1.0))
-
-    test_to_code_ratio = (
-        (test_edits_count / src_edits_count)
-        if src_edits_count > 0
-        else (1.0 if test_edits_count > 0 else 0.5)
-    )
-
-    avg_error_recovery_turns = (
-        (sum(recovery_turns_list) / len(recovery_turns_list))
-        if recovery_turns_list
-        else 1.0
-    )
-
-    # 1. Turns per completion
-    turns_per_completion_avg = (
-        round(sum(completed_turns_list) / len(completed_turns_list), 1)
-        if completed_turns_list
-        else round(total_turns_count / max(1, total_sessions), 1)
-    )
-
-    # 2. Duration per completion
-    duration_seconds_per_completion_avg = (
-        round(sum(completed_durations_list) / len(completed_durations_list), 1)
-        if completed_durations_list
-        else 0.0
-    )
-    duration_minutes_per_completion_avg = round(duration_seconds_per_completion_avg / 60.0, 1)
-
-    # 3. Follow-up code fixes on same code
-    followup_code_fix_rate_pct = (
-        round(
-            (total_followup_code_fixes / max(1, total_unique_files_edited + total_followup_code_fixes))
-            * 100.0,
-            1,
-        )
-        if total_unique_files_edited > 0
-        else 0.0
-    )
-
-    # 4. Verbosity level & Comment-to-code ratio
-    verbosity_tokens_per_turn = round(total_output_tokens / max(1, total_turns_count), 1)
-    if verbosity_tokens_per_turn < 150:
-        verbosity_level = "Concise"
-    elif verbosity_tokens_per_turn <= 350:
-        verbosity_level = "Moderate"
-    else:
-        verbosity_level = "Verbose"
-
-    comment_to_code_ratio = (
-        round(total_comment_lines / max(1, total_code_lines), 2)
-        if total_code_lines > 0
-        else (1.0 if total_comment_lines > 0 else 0.0)
-    )
-    comment_density_pct = (
-        round((total_comment_lines / max(1, total_comment_lines + total_code_lines)) * 100.0, 1)
-        if (total_comment_lines + total_code_lines) > 0
-        else 0.0
-    )
-
-    # Balanced 0-100 score:
-    # 35% Verified Task Completion, 30% Verification Diligence, 20% First-Pass Tool Success, 15% Edit Stability (Thrash-Free)
-    raw_score = (
-        0.35 * task_completion_rate
-        + 0.30 * verification_rate
-        + 0.20 * first_pass_success_rate
-        + 0.15 * edit_stability
-    ) * 100.0
-
-    quality_score = max(0, min(100, int(round(raw_score))))
-    if quality_score >= 90:
-        grade = "A"
-    elif quality_score >= 80:
-        grade = "B"
-    elif quality_score >= 70:
-        grade = "C"
-    elif quality_score >= 60:
-        grade = "D"
-    else:
-        grade = "F"
+    rates = {
+        "verification_rate": verification_rate,
+        "edit_convergence_rate": edit_convergence_rate,
+        "tool_success_rate": tool_success_rate,
+    }
+    raw_score = sum(rates[k] * w for k, w in _QUALITY_WEIGHTS) * 100.0
+    quality_score = max(0, min(100, int(round(raw_score)))) if scored else None
 
     return {
         "available": True,
+        "scored": scored,
         "quality_score": quality_score,
-        "grade": grade,
-        "task_completion_rate": round(task_completion_rate, 4),
-        "task_completion_rate_pct": round(task_completion_rate * 100.0, 1),
+        "grade": _grade(quality_score) if scored else "—",
         "verification_rate": round(verification_rate, 4),
         "verification_rate_pct": round(verification_rate * 100.0, 1),
-        "first_pass_success_rate": round(first_pass_success_rate, 4),
-        "first_pass_success_rate_pct": round(first_pass_success_rate * 100.0, 1),
+        "edit_convergence_rate": round(edit_convergence_rate, 4),
+        "edit_convergence_rate_pct": round(edit_convergence_rate * 100.0, 1),
+        "tool_success_rate": round(tool_success_rate, 4),
+        "tool_success_rate_pct": round(tool_success_rate * 100.0, 1),
         "tool_error_rate": round(tool_error_rate, 4),
         "tool_error_rate_pct": round(tool_error_rate * 100.0, 1),
         "total_edits": total_edits,
         "total_tests": total_tests,
         "total_tool_calls": total_tool_calls,
-        "thrashed_files_count": thrashed_files_count,
-        "thrashed_files_list": sorted(list(all_thrashed_files))[:10],
-        "rework_thrash_rate": round(rework_thrash_rate, 4),
-        "rework_thrash_rate_pct": round(rework_thrash_rate * 100.0, 1),
-        "edit_stability": round(edit_stability, 4),
-        "edit_stability_pct": round(edit_stability * 100.0, 1),
-        "redundant_reads_count": redundant_reads_count,
-        "avg_error_recovery_turns": round(avg_error_recovery_turns, 1),
-        "test_to_code_ratio": round(test_to_code_ratio, 2),
+        "failed_tool_calls": failed_tool_calls,
+        "files_edited": files_edited,
+        "thrashed_files_count": thrashed_pairs,
+        "thrashed_files_list": sorted(thrashed_paths)[:10],
         "sessions_with_edits": sessions_with_edits,
         "sessions_with_tests": sessions_with_tests,
-        "clean_completed_sessions": clean_completed_sessions,
-        "turns_per_completion_avg": turns_per_completion_avg,
-        "duration_seconds_per_completion_avg": duration_seconds_per_completion_avg,
-        "duration_minutes_per_completion_avg": duration_minutes_per_completion_avg,
-        "followup_code_fixes_count": total_followup_code_fixes,
-        "followup_code_fix_rate_pct": followup_code_fix_rate_pct,
-        "verbosity_tokens_per_turn": verbosity_tokens_per_turn,
-        "verbosity_level": verbosity_level,
-        "comment_to_code_ratio": comment_to_code_ratio,
-        "comment_density_pct": comment_density_pct,
-        "total_comment_lines": total_comment_lines,
-        "total_code_lines": total_code_lines,
     }
 
 
-MIN_QUALITY_EVAL_TURNS = 20
+# A row on the comparison tables is a claim that one engine or model scores differently
+# from another. One session of thirty turns cannot support that claim — it used to render
+# a perfect 100 next to a three-hundred-session row, which reads as a ranking and is not
+# one. Both gates must clear: turns alone let a single long session qualify.
+MIN_QUALITY_EVAL_TURNS = 100
+MIN_QUALITY_EVAL_SESSIONS = 5
+
+
+def _eligible(group: List[Dict[str, Any]]) -> bool:
+    """Enough evidence for a row of its own?"""
+    turns = sum(len(g.get("turns") or []) for g in group)
+    return len(group) >= MIN_QUALITY_EVAL_SESSIONS and turns >= MIN_QUALITY_EVAL_TURNS
 
 
 def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Calculates unified code quality, verification hygiene, and reliability metrics.
 
     Includes top-line metrics along with breakdowns:
-    - by_agent: Quality scores partitioned per agent engine (Claude Code, Antigravity, Codex) with >= 20 turns.
-    - by_model: Quality scores partitioned per LLM model with >= 20 turns.
-    - by_category: Quality and capability metrics partitioned per coding task domain (UI, Backend, Testing, Docs, Research).
+    - by_agent: per agent engine (Claude Code, Antigravity, Codex), rows that clear ``_eligible``.
+    - by_model: per LLM model, rows that clear ``_eligible``.
+    - by_category: per coding task domain (UI, Backend, Testing, Docs, Research); every
+      declared domain is emitted so the taxonomy stays stable, empty ones included.
+
+    A ``by_model`` row is built from *projections* — each session reduced to the turns that
+    model produced — so its verification and convergence rates answer "did this model test
+    and converge on what it touched", not "was the session it took part in verified".
     """
     overall = _calc_quality_block(sess)
     if not sess:
@@ -2462,9 +2300,9 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         agent_groups.setdefault(ak, []).append(s)
 
     for ak, a_sess in agent_groups.items():
-        a_turns = sum(len(s.get("turns", [])) for s in a_sess)
-        if a_turns < MIN_QUALITY_EVAL_TURNS:
+        if not _eligible(a_sess):
             continue
+        a_turns = sum(len(s.get("turns", [])) for s in a_sess)
         block = _calc_quality_block(a_sess)
         by_agent[ak] = {
             "agent": ak,
@@ -2492,9 +2330,9 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     by_model: List[Dict[str, Any]] = []
     for m_name, m_sess in sorted(model_sessions.items(), key=lambda kv: -len(kv[1])):
-        m_turns = sum(len(s.get("turns", [])) for s in m_sess)
-        if m_turns < MIN_QUALITY_EVAL_TURNS or str(m_name).startswith("<"):
+        if str(m_name).startswith("<") or not _eligible(m_sess):
             continue
+        m_turns = sum(len(s.get("turns", [])) for s in m_sess)
         block = _calc_quality_block(m_sess)
         by_model.append(
             {
@@ -2518,22 +2356,26 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
         best_agent = "—"
         best_agent_score = -1
+        # Fixed order, so a tie resolves the same way on every render.
         for ak in (AGENT_CLAUDE, AGENT_ANTIGRAVITY, AGENT_CODEX):
             sub_ak = [s for s in c_sess if (s.get("agent_type") or AGENT_CLAUDE) == ak]
-            sub_ak_turns = sum(len(s.get("turns", [])) for s in sub_ak)
-            if sub_ak and sub_ak_turns >= MIN_QUALITY_EVAL_TURNS:
+            if _eligible(sub_ak):
                 sc = _calc_quality_block(sub_ak)["quality_score"]
-                if sc > best_agent_score:
+                if sc is not None and sc > best_agent_score:
                     best_agent_score = sc
                     best_agent = AGENTS.get(ak, ak.capitalize())
 
         best_model = "—"
         best_model_score = -1
-        cat_models = set(
-            t.get("model")
-            for s in c_sess
-            for t in s.get("turns", [])
-            if t.get("model") and not str(t.get("model")).startswith("<")
+        # Sorted, not set order: two models frequently tie on an integer score, and set
+        # iteration order made the winner change between renders of the same data.
+        cat_models = sorted(
+            {
+                t.get("model")
+                for s in c_sess
+                for t in s.get("turns", [])
+                if t.get("model") and not str(t.get("model")).startswith("<")
+            }
         )
         for m in cat_models:
             sub_m = []
@@ -2541,10 +2383,9 @@ def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
                 proj = [t for t in s.get("turns", []) if t.get("model") == m]
                 if proj:
                     sub_m.append({"turns": proj, "events": s.get("events", [])})
-            sub_m_turns = sum(len(s.get("turns", [])) for s in sub_m)
-            if sub_m and sub_m_turns >= MIN_QUALITY_EVAL_TURNS:
+            if _eligible(sub_m):
                 sc = _calc_quality_block(sub_m)["quality_score"]
-                if sc > best_model_score:
+                if sc is not None and sc > best_model_score:
                     best_model_score = sc
                     best_model = m
 
@@ -2915,15 +2756,16 @@ def recommendations(
                 )
             )
         if qm.get("thrashed_files_count", 0) >= 3:
+            churn_pct = round(100.0 - qm.get("edit_convergence_rate_pct", 100.0), 1)
             recs.append(
                 _rec(
                     f"File edit thrashing detected on {qm.get('thrashed_files_count')} files",
                     "Agent modified the same files 3+ times in single sessions. Providing more explicit prompt instructions, "
                     "specifying test fixtures, or decomposing tasks into smaller subagents reduces edit churn.",
-                    f"{qm.get('thrashed_files_count')} thrashed files across scope",
+                    f"{qm.get('thrashed_files_count')} of {qm.get('files_edited', 0)} files edited needed 3+ passes",
                     "MED",
-                    f"{qm.get('rework_thrash_rate_pct')}% thrash",
-                    "churn rate",
+                    f"{churn_pct}% thrash",
+                    "of files edited",
                 )
             )
 
@@ -3515,77 +3357,62 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
 
     # Code Quality & Reliability Metrics
     qm = d.get("quality") or {}
-    lines.append("# HELP ace_quality_score Composite code quality and verification score (0-100).")
-    lines.append("# TYPE ace_quality_score gauge")
-    lines.append(f'ace_quality_score{{agent="all"}} {qm.get("quality_score", 100)}')
-    for agent_id, q_info in (qm.get("by_agent") or {}).items():
-        lines.append(f'ace_quality_score{{agent="{agent_id}"}} {q_info.get("quality_score", 100)}')
-    for m_info in (qm.get("by_model") or []):
-        m_name = m_info.get("model", "unknown")
-        lines.append(f'ace_quality_score{{model="{m_name}"}} {m_info.get("quality_score", 100)}')
+    by_agent = qm.get("by_agent") or {}
+    by_model = qm.get("by_model") or []
 
-    lines.append("# HELP ace_quality_verification_rate Share of edited sessions that ran automated tests or linters.")
+    lines.append("# HELP ace_quality_score Composite code quality score (0-100): 45% verification, 35% edit convergence, 20% tool success.")
+    lines.append("# TYPE ace_quality_score gauge")
+    if qm.get("quality_score") is not None:
+        lines.append(f'ace_quality_score{{agent="all"}} {qm["quality_score"]}')
+    for agent_id, q_info in by_agent.items():
+        if q_info.get("quality_score") is not None:
+            lines.append(f'ace_quality_score{{agent="{agent_id}"}} {q_info["quality_score"]}')
+    for m_info in by_model:
+        if m_info.get("quality_score") is not None:
+            lines.append(f'ace_quality_score{{model="{m_info.get("model")}"}} {m_info["quality_score"]}')
+
+    lines.append("# HELP ace_quality_verification_rate Share of editing sessions that also ran a test or lint command.")
     lines.append("# TYPE ace_quality_verification_rate gauge")
     lines.append(f'ace_quality_verification_rate{{agent="all"}} {qm.get("verification_rate", 1.0)}')
-    for agent_id, q_info in (qm.get("by_agent") or {}).items():
+    for agent_id, q_info in by_agent.items():
         lines.append(f'ace_quality_verification_rate{{agent="{agent_id}"}} {q_info.get("verification_rate", 1.0)}')
 
-    lines.append("# HELP ace_quality_first_pass_success_rate Share of tool calls that succeeded on first pass.")
-    lines.append("# TYPE ace_quality_first_pass_success_rate gauge")
-    lines.append(f'ace_quality_first_pass_success_rate{{agent="all"}} {qm.get("first_pass_success_rate", 1.0)}')
-    for agent_id, q_info in (qm.get("by_agent") or {}).items():
-        lines.append(f'ace_quality_first_pass_success_rate{{agent="{agent_id}"}} {q_info.get("first_pass_success_rate", 1.0)}')
+    lines.append("# HELP ace_quality_edit_convergence_rate Share of files edited in a session that did not need 3 or more passes.")
+    lines.append("# TYPE ace_quality_edit_convergence_rate gauge")
+    lines.append(f'ace_quality_edit_convergence_rate{{agent="all"}} {qm.get("edit_convergence_rate", 1.0)}')
+    for agent_id, q_info in by_agent.items():
+        lines.append(f'ace_quality_edit_convergence_rate{{agent="{agent_id}"}} {q_info.get("edit_convergence_rate", 1.0)}')
 
-    lines.append("# HELP ace_quality_tool_error_rate Share of tool executions that returned errors.")
+    lines.append("# HELP ace_quality_tool_success_rate Share of tool calls that returned without an error.")
+    lines.append("# TYPE ace_quality_tool_success_rate gauge")
+    lines.append(f'ace_quality_tool_success_rate{{agent="all"}} {qm.get("tool_success_rate", 1.0)}')
+    for agent_id, q_info in by_agent.items():
+        lines.append(f'ace_quality_tool_success_rate{{agent="{agent_id}"}} {q_info.get("tool_success_rate", 1.0)}')
+
+    lines.append("# HELP ace_quality_tool_error_rate Share of tool calls that returned an error.")
     lines.append("# TYPE ace_quality_tool_error_rate gauge")
     lines.append(f'ace_quality_tool_error_rate {qm.get("tool_error_rate", 0.0)}')
 
-    lines.append("# HELP ace_quality_thrashed_files_total Number of files edited 3 or more times in a single session.")
+    lines.append("# HELP ace_quality_thrashed_files_total Files edited 3 or more times within a single session.")
     lines.append("# TYPE ace_quality_thrashed_files_total counter")
     lines.append(f'ace_quality_thrashed_files_total {qm.get("thrashed_files_count", 0)}')
 
-    lines.append("# HELP ace_quality_redundant_reads_total Count of consecutive duplicate file reads.")
-    lines.append("# TYPE ace_quality_redundant_reads_total counter")
-    lines.append(f'ace_quality_redundant_reads_total {qm.get("redundant_reads_count", 0)}')
-
-    lines.append("# HELP ace_quality_error_recovery_turns_avg Average turns to recover from an execution error.")
-    lines.append("# TYPE ace_quality_error_recovery_turns_avg gauge")
-    lines.append(f'ace_quality_error_recovery_turns_avg {qm.get("avg_error_recovery_turns", 1.0)}')
-
-    lines.append("# HELP ace_quality_test_to_code_ratio Ratio of test file edits to source file edits.")
-    lines.append("# TYPE ace_quality_test_to_code_ratio gauge")
-    lines.append(f'ace_quality_test_to_code_ratio {qm.get("test_to_code_ratio", 1.0)}')
-
-    lines.append("# HELP ace_quality_turns_per_completion_avg Average turns required to complete a verified task.")
-    lines.append("# TYPE ace_quality_turns_per_completion_avg gauge")
-    lines.append(f'ace_quality_turns_per_completion_avg {qm.get("turns_per_completion_avg", 1.0)}')
-
-    lines.append("# HELP ace_quality_duration_seconds_per_completion_avg Average wall-clock seconds to complete a task.")
-    lines.append("# TYPE ace_quality_duration_seconds_per_completion_avg gauge")
-    lines.append(f'ace_quality_duration_seconds_per_completion_avg {qm.get("duration_seconds_per_completion_avg", 0.0)}')
-
-    lines.append("# HELP ace_quality_followup_code_fixes_total Number of follow-up code edits on previously modified files.")
-    lines.append("# TYPE ace_quality_followup_code_fixes_total counter")
-    lines.append(f'ace_quality_followup_code_fixes_total {qm.get("followup_code_fixes_count", 0)}')
-
-    lines.append("# HELP ace_quality_comment_to_code_ratio Ratio of comment lines to executable code lines in modifications.")
-    lines.append("# TYPE ace_quality_comment_to_code_ratio gauge")
-    lines.append(f'ace_quality_comment_to_code_ratio {qm.get("comment_to_code_ratio", 0.0)}')
-
-    lines.append("# HELP ace_quality_verbosity_tokens_per_turn Average output tokens generated per agent turn.")
-    lines.append("# TYPE ace_quality_verbosity_tokens_per_turn gauge")
-    lines.append(f'ace_quality_verbosity_tokens_per_turn {qm.get("verbosity_tokens_per_turn", 0.0)}')
+    lines.append("# HELP ace_quality_files_edited_total Distinct files edited, counted once per session that edited them.")
+    lines.append("# TYPE ace_quality_files_edited_total counter")
+    lines.append(f'ace_quality_files_edited_total {qm.get("files_edited", 0)}')
 
     # Task Category Performance Metrics
     lines.append("# HELP ace_quality_category_score Quality score partitioned by task category.")
     lines.append("# TYPE ace_quality_category_score gauge")
     for cat_id, cat_info in (qm.get("by_category") or {}).items():
-        lines.append(f'ace_quality_category_score{{category="{cat_id}"}} {cat_info.get("quality_score", 100)}')
+        if cat_info.get("quality_score") is not None:
+            lines.append(f'ace_quality_category_score{{category="{cat_id}"}} {cat_info["quality_score"]}')
 
-    lines.append("# HELP ace_quality_category_completion_rate Task completion rate partitioned by task category.")
-    lines.append("# TYPE ace_quality_category_completion_rate gauge")
+    lines.append("# HELP ace_quality_category_verification_rate Verification rate partitioned by task category.")
+    lines.append("# TYPE ace_quality_category_verification_rate gauge")
     for cat_id, cat_info in (qm.get("by_category") or {}).items():
-        lines.append(f'ace_quality_category_completion_rate{{category="{cat_id}"}} {cat_info.get("task_completion_rate", 1.0)}')
+        if cat_info.get("scored"):
+            lines.append(f'ace_quality_category_verification_rate{{category="{cat_id}"}} {cat_info["verification_rate"]}')
 
     return "\n".join(lines) + "\n"
 

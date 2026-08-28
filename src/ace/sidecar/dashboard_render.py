@@ -21,6 +21,11 @@ from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+from ace.sidecar.insights import (
+    MIN_QUALITY_EVAL_SESSIONS,
+    MIN_QUALITY_EVAL_TURNS,
+)
+
 try:
     from ace.branding import FAVICON_LINK
 except ImportError:
@@ -229,11 +234,11 @@ border-radius:3px;padding:13px 16px;margin-bottom:9px}
 .snip{color:var(--ink-4);font-size:11.5px;max-width:330px;overflow:hidden;
 text-overflow:ellipsis;white-space:nowrap}
 /* ---- § 02 breakdown tables ----
-   The two quality comparison tables carry more columns than anything else on the page, so
-   they get their own scale rather than the shared table rules: a mono eyebrow with a
-   hairline rule for the title, group separators so engines never read as models, a fixed
-   width score chip so that column scans as one ruler, and a 2px meter under each rate
-   figure — the rows rank at a glance, before any digit is parsed. */
+   The quality comparison tables put three rates side by side across engines, models and
+   task domains, so they get their own scale rather than the shared table rules: a mono
+   eyebrow with a hairline rule for the title, group separators so engines never read as
+   models, a fixed width score chip so that column scans as one ruler, and a 2px meter
+   under each rate figure — the rows rank at a glance, before any digit is parsed. */
 .qhd{display:flex;align-items:center;gap:13px;margin:24px 0 9px}
 .qhd .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
 color:var(--ink-2);font-weight:500;white-space:nowrap}
@@ -267,6 +272,7 @@ border:1px solid var(--line-2);border-radius:4px;padding:2px 9px;display:inline-
 .gr{font-family:var(--mono);font-size:12px;font-weight:700;display:inline-block;min-width:64px;
 text-align:center;padding:2px 0;border:1px solid;border-radius:4px;
 font-variant-numeric:tabular-nums}
+.gr.na{color:var(--ink-4);border-color:var(--line-2)}
 .gr.hi{color:var(--mint);border-color:#1d3b2e;background:var(--good-bg)}
 .gr.mid{color:var(--gold);border-color:#3d3014;background:var(--warn-bg)}
 .gr.lo{color:var(--crit);border-color:#4a1e17;background:#2a110e}
@@ -825,7 +831,13 @@ def _q_head(cols: List[Tuple[str, bool]]) -> str:
 
 
 def _q_grade(score: Any, grade: str) -> str:
-    """Score chip, fixed width so the column reads as one ruler rather than ragged text."""
+    """Score chip, fixed width so the column reads as one ruler rather than ragged text.
+
+    ``None`` is a slice with nothing to score — a read-only domain that never edited a
+    file. It gets a dash, because the alternative is a 100 produced by empty denominators.
+    """
+    if score is None:
+        return "<td><span class='gr na'>— (n/a)</span></td>"
     try:
         s = float(score)
     except (TypeError, ValueError):
@@ -836,6 +848,8 @@ def _q_grade(score: Any, grade: str) -> str:
 
 def _q_meter(val: Any, good: float, ok: float) -> str:
     """A rate cell: the figure over a hairline bar, so rows rank without parsing digits."""
+    if val is None:
+        return "<td class='num z'>—</td>"
     try:
         v = float(val)
     except (TypeError, ValueError):
@@ -855,7 +869,13 @@ def _q_num(val: Any, unit: str = "") -> str:
 
 
 def _quality(qm: Optional[Dict[str, Any]]) -> str:
-    """§ 02 — Code quality, verification hygiene, and agent execution reliability."""
+    """§ 02 — verification hygiene, edit convergence, and tool reliability.
+
+    Three rates and the composite over them. The section used to carry ten tiles and eleven
+    table columns; most of those measured something other than code quality (tokens per
+    turn, comment-to-code ratio), restated one of these three, or could not be computed
+    honestly from a transcript. What is left is what a reader can act on.
+    """
     if not qm or not qm.get("available"):
         return (
             "<div class='pan'><div class='ph'><span>~/ace/code_quality</span>"
@@ -864,112 +884,91 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             "Metrics will populate as coding agent sessions run and edit workspace files.</div></div></div>"
         )
 
-    score = qm.get("quality_score", 100)
-    grade = qm.get("grade", "A")
-    c_rate = qm.get("task_completion_rate_pct", 100.0)
+    scored = bool(qm.get("scored"))
+    score = qm.get("quality_score")
+    grade = qm.get("grade", "—")
     v_rate = qm.get("verification_rate_pct", 100.0)
-    fsr = qm.get("first_pass_success_rate_pct", 100.0)
+    conv = qm.get("edit_convergence_rate_pct", 100.0)
+    tsr = qm.get("tool_success_rate_pct", 100.0)
     err_rate = qm.get("tool_error_rate_pct", 0.0)
     thrash_cnt = qm.get("thrashed_files_count", 0)
-    recovery_turns = qm.get("avg_error_recovery_turns", 1.0)
-    redundant_reads = qm.get("redundant_reads_count", 0)
+    files_edited = qm.get("files_edited", 0)
+    failed_calls = qm.get("failed_tool_calls", 0)
     sessions_edits = qm.get("sessions_with_edits", 0)
     sessions_tests = qm.get("sessions_with_tests", 0)
-    clean_completed = qm.get("clean_completed_sessions", 0)
 
-    turns_task = qm.get("turns_per_completion_avg", 1.0)
-    time_task_min = qm.get("duration_minutes_per_completion_avg", 0.0)
-    followup_fixes = qm.get("followup_code_fixes_count", 0)
-    followup_rate = qm.get("followup_code_fix_rate_pct", 0.0)
-    comment_ratio = qm.get("comment_to_code_ratio", 0.0)
-    comment_density = qm.get("comment_density_pct", 0.0)
-    verbosity_tok = qm.get("verbosity_tokens_per_turn", 0.0)
-    verbosity_lvl = qm.get("verbosity_level", "Concise")
-
-    score_color = (
-        "var(--mint)"
-        if score >= 80
-        else ("var(--gold)" if score >= 60 else "var(--crit)")
-    )
-    c_cls = "" if c_rate >= 80 else ("warn" if c_rate >= 60 else "crit")
+    if not scored:
+        score_color = "var(--ink-3)"
+    elif score >= 80:
+        score_color = "var(--mint)"
+    elif score >= 60:
+        score_color = "var(--gold)"
+    else:
+        score_color = "var(--crit)"
     v_cls = "" if v_rate >= 75 else ("warn" if v_rate >= 50 else "crit")
-    fsr_cls = "" if fsr >= 85 else ("warn" if fsr >= 70 else "crit")
-    thrash_cls = "" if thrash_cnt == 0 else ("warn" if thrash_cnt <= 5 else "crit")
+    conv_cls = "" if conv >= 85 else ("warn" if conv >= 70 else "crit")
+    tsr_cls = "" if tsr >= 95 else ("warn" if tsr >= 85 else "crit")
+
+    score_fig = (
+        f"<span style='color:{score_color}'>{score}</span>"
+        f"<span style='font-size:0.6em;color:var(--ink-3);margin-left:4px'>/ 100</span>"
+        if scored
+        else f"<span style='color:{score_color}'>n/a</span>"
+    )
+    v_fig = f"{v_rate}%" if scored else "—"
+    conv_fig = f"{conv}%" if scored else "—"
 
     tiles = [
         _st(
             "quality_score",
-            f"<span style='color:{score_color}'>{score}</span><span style='font-size:0.6em;color:var(--ink-3);margin-left:4px'>/ 100</span>",
-            f"Grade {grade}",
+            score_fig,
+            f"Grade {grade}" if scored else "no editing sessions in scope",
             delta="COMPOSITE",
-            title="Weighted reliability index across task completion (35%), verification hygiene (30%), first-pass tool success (20%), and edit stability (15%).",
-        ),
-        _st(
-            "task_completion",
-            f"{c_rate}%",
-            f"{clean_completed} verified sessions",
-            delta="TASK RESOLUTION",
-            dcls=c_cls,
-            title="Percentage of sessions that resolved cleanly without trailing tool errors or unverified changes.",
-        ),
-        _st(
-            "turns_per_task",
-            f"{turns_task} turns",
-            "avg turns / completion",
-            delta="CONVERSATION EFFICIENCY",
-            title="Average number of conversation turns required to achieve a verified clean task completion.",
-        ),
-        _st(
-            "time_per_task",
-            f"{time_task_min} min",
-            "avg elapsed / completion",
-            delta="DELIVERY SPEED",
-            title="Average wall-clock duration in minutes from session start to verified resolution.",
-        ),
-        _st(
-            "first_pass_success",
-            f"{fsr}%",
-            f"{err_rate}% error rate",
-            delta="TOOL RELIABILITY",
-            dcls=fsr_cls,
-            title="Share of tool executions that succeeded on their first attempt without returning execution errors or non-zero exit codes.",
+            title=(
+                "Weighted index over the three tiles beside it: verification rate (45%), "
+                "edit convergence (35%), tool success (20%).\n"
+                "Nothing else feeds it — a figure that restates one of these three would "
+                "count that signal twice."
+            ),
         ),
         _st(
             "verification_rate",
-            f"{v_rate}%",
+            v_fig,
             f"{sessions_tests} of {sessions_edits} edit sessions",
             delta="TEST HYGIENE",
             dcls=v_cls,
-            title="Percentage of sessions containing file modifications that executed an automated test runner or linter (pytest, npm test, ruff, etc.).",
+            title=(
+                "Share of sessions that modified a file and also ran an automated test or "
+                "lint command (pytest, npm test, cargo test, ruff, …).\n"
+                "Sessions that edited nothing are left out of the denominator rather than "
+                "scoring as a free pass."
+            ),
         ),
         _st(
-            "followup_fixes",
-            f"{followup_fixes}",
-            f"{followup_rate}% rework rate",
-            delta="FOLLOW-UP FIXES",
-            title="Follow-up code modifications and bugfixes applied to the same files in subsequent turns.",
+            "edit_convergence",
+            conv_fig,
+            f"{thrash_cnt} of {files_edited} needed 3+ passes",
+            delta="EDIT STABILITY",
+            dcls=conv_cls,
+            title=(
+                "Share of edited files that landed in fewer than three passes, counted once "
+                "per session that touched them.\n"
+                "A file rewritten three times in one session did not converge. Agent "
+                "planning scratch files are excluded — they are bookkeeping, not code."
+            ),
         ),
         _st(
-            "comment_ratio",
-            f"{comment_ratio}x",
-            f"{comment_density}% comment density",
-            delta="CODE COMMENT DENSITY",
-            title="Ratio of inline comments to executable code lines in modifications.",
-        ),
-        _st(
-            "verbosity",
-            f"{verbosity_tok} tok",
-            f"{verbosity_lvl} explanation",
-            delta="VERBOSITY LEVEL",
-            title="Average generated output tokens per conversational turn.",
-        ),
-        _st(
-            "edit_thrash_files",
-            f"{thrash_cnt}",
-            f"{qm.get('total_edits', 0)} total file edits",
-            delta="REWORK CHURN",
-            dcls=thrash_cls,
-            title="Files edited 3 or more times within the same session, indicating thrashing or lack of convergence.",
+            "tool_success",
+            f"{tsr}%",
+            f"{failed_calls} of {qm.get('total_tool_calls', 0)} calls errored",
+            delta="TOOL RELIABILITY",
+            dcls=tsr_cls,
+            title=(
+                f"Share of tool calls that returned without an execution error or non-zero "
+                f"exit ({err_rate}% errored).\n"
+                "Counted per call, so a failure followed by a successful retry is one of "
+                "each — this is not a first-attempt rate."
+            ),
         ),
     ]
 
@@ -989,6 +988,17 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
 
     # Engines and models share one ruler of columns, but they are different populations —
     # an engine row aggregates every model it drove. Group rows keep that readable.
+    def _rate_cells(info: Dict[str, Any]) -> str:
+        # Tool success is measurable even where nothing was edited, so it always renders;
+        # the other two are about edits and stay blank without any.
+        edited = info.get("scored")
+        return (
+            _q_grade(info.get("quality_score"), info.get("grade", "—"))
+            + _q_meter(info.get("verification_rate_pct") if edited else None, 75.0, 50.0)
+            + _q_meter(info.get("edit_convergence_rate_pct") if edited else None, 85.0, 70.0)
+            + _q_meter(info.get("tool_success_rate_pct", 100.0), 95.0, 85.0)
+        )
+
     engine_rows: List[str] = []
     by_agent = qm.get("by_agent") or {}
     for ak, a_info in by_agent.items():
@@ -996,16 +1006,9 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         engine_rows.append(
             "<tr>"
             f"<td><span class='eng {eng_cls}'>{escape(str(a_info.get('label', ak)))}</span></td>"
-            + _q_grade(a_info.get("quality_score", 100), a_info.get("grade", "A"))
-            + _q_meter(a_info.get("task_completion_rate_pct", 100.0), 80.0, 60.0)
-            + _q_num(a_info.get("turns_per_completion_avg", 1.0))
-            + _q_num(a_info.get("duration_minutes_per_completion_avg", 0.0), "m")
-            + _q_meter(a_info.get("verification_rate_pct", 100.0), 75.0, 50.0)
-            + _q_meter(a_info.get("first_pass_success_rate_pct", 100.0), 85.0, 70.0)
-            + _q_num(a_info.get("followup_code_fixes_count", 0))
-            + _q_num(a_info.get("comment_to_code_ratio", 0.0), "x")
-            + _q_num(a_info.get("verbosity_tokens_per_turn", 0.0), " tok")
+            + _rate_cells(a_info)
             + _q_num(a_info.get("sessions", 0))
+            + _q_num(a_info.get("total_turns", 0))
             + "</tr>"
         )
 
@@ -1014,16 +1017,9 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         model_rows.append(
             "<tr>"
             f"<td><code class='nm'>{escape(str(m_info.get('model', 'unknown')))}</code></td>"
-            + _q_grade(m_info.get("quality_score", 100), m_info.get("grade", "A"))
-            + _q_meter(m_info.get("task_completion_rate_pct", 100.0), 80.0, 60.0)
-            + _q_num(m_info.get("turns_per_completion_avg", 1.0))
-            + _q_num(m_info.get("duration_minutes_per_completion_avg", 0.0), "m")
-            + _q_meter(m_info.get("verification_rate_pct", 100.0), 75.0, 50.0)
-            + _q_meter(m_info.get("first_pass_success_rate_pct", 100.0), 85.0, 70.0)
-            + _q_num(m_info.get("followup_code_fixes_count", 0))
-            + _q_num(m_info.get("comment_to_code_ratio", 0.0), "x")
-            + _q_num(m_info.get("verbosity_tokens_per_turn", 0.0), " tok")
+            + _rate_cells(m_info)
             + _q_num(m_info.get("sessions", 0))
+            + _q_num(m_info.get("total_turns", 0))
             + "</tr>"
         )
 
@@ -1032,17 +1028,18 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         body = ""
         if engine_rows:
             body += (
-                "<tr class='grp'><td colspan='11'>Agent engines</td></tr>"
+                "<tr class='grp'><td colspan='7'>Agent engines</td></tr>"
                 + "".join(engine_rows)
             )
         if model_rows:
             body += (
-                "<tr class='grp'><td colspan='11'>Underlying models</td></tr>"
+                "<tr class='grp'><td colspan='7'>Underlying models</td></tr>"
                 + "".join(model_rows)
             )
         note = (
             f"{len(engine_rows)} engine{'' if len(engine_rows) == 1 else 's'} · "
-            f"{len(model_rows)} model{'' if len(model_rows) == 1 else 's'}"
+            f"{len(model_rows)} model{'' if len(model_rows) == 1 else 's'} · "
+            f"\u2265{MIN_QUALITY_EVAL_SESSIONS} sessions and \u2265{MIN_QUALITY_EVAL_TURNS} turns"
         )
         matrix_table = (
             _q_hdr("Engine &amp; model reliability", note)
@@ -1051,15 +1048,11 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
                 [
                     ("Engine / model", False),
                     ("Score", False),
-                    ("Completion", True),
-                    ("Turns/task", True),
-                    ("Time/task", True),
                     ("Verification", True),
-                    ("First-pass", True),
-                    ("Follow-up fixes", True),
-                    ("Comment ratio", True),
-                    ("Verbosity", True),
+                    ("Convergence", True),
+                    ("Tool success", True),
                     ("Sessions", True),
+                    ("Turns", True),
                 ]
             )
             + f"<tbody>{body}</tbody></table></div>"
@@ -1080,14 +1073,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<span>{escape(str(c_info.get('label', 'Other')))}</span>"
             f"<span class='shr'>{c_info.get('share_pct', 0.0)}%</span></div>"
             f"<div class='sub'>{escape(str(c_info.get('desc', '')))}</div></td>"
-            + _q_grade(c_info.get("quality_score", 100), c_info.get("grade", "A"))
-            + _q_meter(c_info.get("task_completion_rate_pct", 100.0), 80.0, 60.0)
-            + _q_num(c_info.get("turns_per_completion_avg", 1.0))
-            + _q_num(c_info.get("duration_minutes_per_completion_avg", 0.0), "m")
-            + _q_meter(c_info.get("verification_rate_pct", 100.0), 75.0, 50.0)
-            + _q_meter(c_info.get("first_pass_success_rate_pct", 100.0), 85.0, 70.0)
-            + _q_num(c_info.get("followup_code_fixes_count", 0))
-            + _q_num(c_info.get("comment_to_code_ratio", 0.0), "x")
+            + _rate_cells(c_info)
             + _q_num(c_info.get("sessions", 0))
             + f"<td><div class='nm'>{escape(str(c_info.get('best_agent', '—')))}</div>"
             f"<div class='sub'>{escape(str(c_info.get('best_model', '—')))}</div></td>"
@@ -1107,13 +1093,9 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
                 [
                     ("Task domain", False),
                     ("Score", False),
-                    ("Completion", True),
-                    ("Turns/task", True),
-                    ("Time/task", True),
                     ("Verification", True),
-                    ("First-pass", True),
-                    ("Follow-up fixes", True),
-                    ("Comment ratio", True),
+                    ("Convergence", True),
+                    ("Tool success", True),
                     ("Sessions", True),
                     ("Best fit engine / model", False),
                 ]
@@ -1127,18 +1109,17 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         f"<div class='ph'><span>~/ace/quality_breakdown</span><span class='live'><i></i>LOCAL VERIFIED</span></div>"
         f"<div class='pb'>"
         f"<div style='display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);'>"
-        f"<div><b style='color:var(--ink);'>{sessions_tests}</b> test-verified sessions</div>"
         f"<div><b style='color:var(--ink);'>{sessions_edits}</b> editing sessions</div>"
+        f"<div><b style='color:var(--ink);'>{sessions_tests}</b> test-verified sessions</div>"
+        f"<div><b style='color:var(--ink);'>{qm.get('total_edits', 0)}</b> file edits</div>"
         f"<div><b style='color:var(--ink);'>{qm.get('total_tool_calls', 0)}</b> total tool executions</div>"
-        f"<div><b style='color:var(--ink);'>{redundant_reads}</b> redundant duplicate file reads</div>"
         f"</div>"
         f"{thrash_html}"
         f"{matrix_table}"
         f"{category_table}"
-        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. Correlates cost against first-pass tool correctness, test diligence, and domain task fit.</div>"
+        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository: whether they verify their own edits, whether those edits converge, and whether their tool calls run. Turn count and elapsed time per session are in § 01 and the time budget, not here — they are throughput, not quality.</div>"
         f"</div></div>"
     )
-
 
 def _refs(d: Dict[str, Any]) -> Dict[str, Any]:
     """Grounded reference points, or an empty map. Never raises.
@@ -2825,7 +2806,7 @@ def render(d: Dict[str, Any]) -> str:
             "02",
             "CODE QUALITY & RELIABILITY",
             "Agent execution stability & test hygiene.",
-            "Verification rate, rework thrash, and error recovery.",
+            "Verification rate, edit convergence, and tool success.",
             "LOCAL",
         )
     )
