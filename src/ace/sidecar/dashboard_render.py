@@ -789,6 +789,8 @@ body.m-shadow .imp.on,body.m-prod .imp.on{display:flex;gap:6px;align-items:cente
   background:#0f2e3a;color:#5ec8e5;border:1px solid #174657}
 body.m-prod .imp .ik{background:#3a2216;color:#f0a868;border-color:#5c3820}
 .imp .iv{color:#5ec8e5}
+.imp.flat .ik{background:#22262b;color:#8b949e;border-color:#2f353c}
+.imp.flat .iv{color:#6e7681;font-style:italic;white-space:normal;line-height:1.4}
 body.m-prod .imp .iv{color:#f0a868}
 .modebar{display:flex;gap:0;margin:4px 0 2px;border:1px solid #23282e;border-radius:5px;
   overflow:hidden;background:#0d1013}
@@ -864,8 +866,13 @@ def _mode_js() -> str:
   } else { why='No skill is currently enabled, so nothing is attributed.'; }
   var notes={
     off:'Showing measured figures. Nothing is applied.',
-    shadow:'Projected: what the enabled skills would have saved. Prompts unchanged - shadow never edits a request.',
+    shadow:'Counterfactual: what the enabled skills would have changed. Prompts unchanged - shadow never edits a request.',
     prod:'Preview only. Enabling a lever happens in ~/.ace/config.json, never from this page.'};
+  var compact=function(n){var a=Math.abs(n);
+    if(a>=1e9) return (n/1e9).toFixed(2)+'B';
+    if(a>=1e6) return (n/1e6).toFixed(1)+'M';
+    if(a>=1e3) return (n/1e3).toFixed(0)+'k';
+    return n.toFixed(0);};
   function apply(mode){
     document.body.classList.remove('m-shadow','m-prod');
     if(mode!=='off') document.body.classList.add('m-'+mode);
@@ -874,11 +881,23 @@ def _mode_js() -> str:
     var n=document.getElementById('modenote'); if(n) n.textContent=notes[mode]||'';
     document.querySelectorAll('.imp').forEach(function(slot){
       var m=M[slot.dataset.metric];
-      if(!m||mode==='off'||!m.delta){ slot.className='imp'; slot.innerHTML=''; return; }
+      if(!m||mode==='off'){ slot.className='imp'; slot.innerHTML=''; return; }
+      // A metric no enabled skill can move is stated, not left blank. A blank slot and
+      // "this cannot change" look identical to a reader and are different claims.
+      if(m.kind==='none'){
+        slot.className='imp on flat';
+        slot.title='No enabled skill changes this figure: '+(m.why||'')+'.'+NL+NL+why;
+        slot.innerHTML="<span class='ik'>NO CHANGE</span><span class='iv'>"+
+          (m.why||'unaffected')+"</span>";
+        return;
+      }
+      if(!m.delta){ slot.className='imp'; slot.innerHTML=''; return; }
       var pct=m.base? (m.delta/m.base*100):0;
+      var shown=(m.kind==='usd')? usd(m.delta)
+               : (compact(m.delta)+' tok');
       slot.className='imp on'; slot.title=why;
       slot.innerHTML="<span class='ik'>"+(mode==='prod'?'WOULD APPLY':'SHADOW')+"</span>"+
-        "<span class='iv'>"+usd(m.delta)+"  ("+pct.toFixed(1)+"%)</span>";
+        "<span class='iv'>"+shown+"  ("+pct.toFixed(1)+"%)  via "+(m.by||'')+"</span>";
     });
   }
   document.querySelectorAll('#modebar button').forEach(function(b){
@@ -889,59 +908,118 @@ def _mode_js() -> str:
 
 
 def _mode_impact(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Per-metric projected impact of the enabled skills, with the sources that produce it.
+    """Per-metric counterfactual for the enabled skills, and the sources behind each one.
 
-    Two provenances, never merged. ``simulated`` rows come from ``scorecards.standalone`` —
-    a byte-turn estimate of what a lever would be worth. ``measured`` rows come from levers
-    that actually ran on proxied turns. The toggle labels each, because a reader deciding
-    whether to switch a lever on needs to know which of the two they are looking at.
+    Two provenances, never merged. ``simulated`` rows come from ``scorecards.standalone`` — a
+    byte-turn estimate of what a lever would be worth. ``measured`` rows come from levers that
+    actually ran on proxied turns. The toggle labels each, because a reader deciding whether
+    to switch a lever on needs to know which of the two they are looking at.
 
-    Levers are scored ALONE, so their shares overlap and the totals here are deliberately
-    capped at the largest contributor rather than summed. Summing them would promise more than
-    the levers could jointly deliver — the same discipline the ledger and the rail already
-    keep.
+    Levers are scored ALONE, so their shares overlap and nothing here is summed. Every
+    headline is the single largest contributor and the hover text says so — adding them would
+    promise more than the levers could jointly deliver.
+
+    What a volume lever does NOT move
+    ---------------------------------
+    Half the value of this map is the metrics it reports as unchanged, so they are computed
+    explicitly rather than left blank:
+
+    ``tokens_out``          the model generates these. Removing prompt content does not make
+                            a response shorter, and claiming otherwise would be the single
+                            most flattering error available on this page.
+    ``commits_per_session`` a lever cannot write code.
+    ``api_requests`` /
+    ``conversation_turns``  only a loop guardrail moves these, by stopping a runaway cycle —
+                            and it removes no tokens, so it appears here only when it has
+                            actually fired.
+
+    A blank slot and "this skill cannot move this number" look identical to a reader. They are
+    not the same claim.
     """
     fleet = d.get("fleet") or {}
     billed = float(fleet.get("cost") or 0.0)
     turns = float(fleet.get("handbacks") or 0.0)
     sessions = float(fleet.get("sessions") or 0.0)
-    prompt = float((fleet.get("tokens") or {}).get("prompt") or 0.0)
+    reqs = float(fleet.get("requests") or 0.0)
+    tokens = fleet.get("tokens") or {}
+    prompt = float(tokens.get("prompt") or 0.0)
+    output = float(tokens.get("output") or 0.0)
+    commits = float((fleet.get("commits") or {}).get("total") or 0.0)
 
-    sources = []
+    # -- the sources, ranked -------------------------------------------------------------
+    volume: List[Dict[str, Any]] = []
+    guard: List[Dict[str, Any]] = []
     for r in (d.get("scorecards") or {}).get("standalone") or []:
         usd = float(r.get("usd") or 0.0)
-        if usd > 0:
-            sources.append({
-                "lever": r.get("label") or "?", "usd": usd,
-                "share": float(r.get("share") or 0.0), "kind": "simulated",
-                "risk": (r.get("risk") or "").replace("*", ""),
-            })
+        if usd <= 0:
+            continue
+        volume.append({
+            "lever": r.get("label") or "?", "usd": usd,
+            "tokens": float(r.get("tokens") or 0.0),
+            "share": float(r.get("share") or 0.0), "kind": "simulated",
+            "risk": (r.get("risk") or "").replace("*", ""),
+        })
     for r in ((d.get("levers") or {}).get("measured") or {}).get("by_lever") or []:
-        usd = float(r.get("usd") or 0.0)
-        if usd > 0:
-            sources.append({
-                "lever": r.get("lever") or "?", "usd": usd,
-                "share": (usd / billed) if billed else 0.0, "kind": "measured",
-                "risk": "",
-            })
-    sources.sort(key=lambda x: -x["usd"])
+        usd, tok = float(r.get("usd") or 0.0), float(r.get("removed_tokens") or 0.0)
+        if usd <= 0 and tok <= 0:
+            continue
+        row = {
+            "lever": r.get("lever") or "?", "usd": usd, "tokens": tok,
+            "share": (usd / billed) if billed else 0.0, "kind": "measured", "risk": "",
+        }
+        (guard if tok == 0 else volume).append(row)
+    volume.sort(key=lambda x: -x["usd"])
+    sources = volume + guard
 
-    # NOT a sum. See the docstring.
-    best = sources[0]["usd"] if sources else 0.0
+    best_usd = volume[0]["usd"] if volume else 0.0
+    best_tok = max((v["tokens"] for v in volume), default=0.0)
+    top = volume[0]["lever"] if volume else ""
+
+    def usd_metric(base: float, divisor: float = 1.0) -> Dict[str, Any]:
+        d_ = -(best_usd / divisor) if divisor else 0.0
+        return {"kind": "usd", "delta": d_, "base": (base if divisor == 1.0 else base),
+                "by": top}
+
+    m: Dict[str, Any] = {}
+    if volume:
+        # -- money ------------------------------------------------------------------------
+        m["list_price_cost"] = {"kind": "usd", "delta": -best_usd, "base": billed, "by": top}
+        if turns:
+            m["cost_per_turn [3]"] = {"kind": "usd", "delta": -(best_usd / turns),
+                                      "base": billed / turns, "by": top}
+        if sessions:
+            m["cost_per_session [6]"] = {"kind": "usd", "delta": -(best_usd / sessions),
+                                         "base": billed / sessions, "by": top}
+        if commits:
+            m["cost_per_commit [10]"] = {"kind": "usd", "delta": -(best_usd / commits),
+                                         "base": billed / commits, "by": top}
+            m["tokens_per_commit [10]"] = {"kind": "tok", "delta": -(best_tok / commits),
+                                           "base": prompt / commits, "by": top}
+        # -- volume -----------------------------------------------------------------------
+        m["tokens_in [1]"] = {"kind": "tok", "delta": -best_tok, "base": prompt, "by": top}
+
+    # -- and the ones nothing moves, said out loud ----------------------------------------
+    m["tokens_out [1]"] = {
+        "kind": "none", "delta": 0.0, "base": output,
+        "why": "the model generates these — removing prompt content does not shorten a reply",
+    }
+    m["commits_per_session [9]"] = {
+        "kind": "none", "delta": 0.0, "base": 0.0,
+        "why": "no context lever can write code",
+    }
+    fired = [g for g in guard if (g.get("loops") or 0)]
+    for key, base in (("api_requests [2]", reqs), ("conversation_turns [3]", turns)):
+        m[key] = {
+            "kind": "none", "delta": 0.0, "base": base,
+            "why": (
+                "only a loop guardrail moves this, by stopping a runaway cycle; it has "
+                "detected none in this scope"
+            ),
+        }
+
     return {
         "billed": billed, "turns": turns, "sessions": sessions, "prompt": prompt,
-        "best_usd": best, "sources": sources,
-        "metrics": {
-            "list_price_cost": {"kind": "usd", "delta": -best, "base": billed},
-            "cost_per_turn [3]": {
-                "kind": "usd", "delta": -(best / turns) if turns else 0.0,
-                "base": (billed / turns) if turns else 0.0,
-            },
-            "cost_per_session [6]": {
-                "kind": "usd", "delta": -(best / sessions) if sessions else 0.0,
-                "base": (billed / sessions) if sessions else 0.0,
-            },
-        },
+        "best_usd": best_usd, "best_tokens": best_tok, "sources": sources, "metrics": m,
     }
 
 
