@@ -148,6 +148,111 @@ def _sig(name: str, tool_input: Dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+_TEST_CMD_RE = re.compile(
+    r"\b(pytest|npm\s+(?:run\s+)?test|vitest|jest|cargo\s+test|go\s+test|dotnet\s+test|ctest|ruff|eslint|mypy|flake8|pylint|black\s+--check|tsc\s+--noEmit|bundle\s+exec\s+rspec)\b",
+    re.IGNORECASE,
+)
+
+_TEST_FILE_RE = re.compile(
+    r"(^|[/\\])(tests?|spec|__tests__)[/\\]|(\.|_)(test|spec)\.[a-zA-Z0-9]+$",
+    re.IGNORECASE,
+)
+
+_SOURCE_FILE_EXTS = (
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".sh",
+    ".html",
+    ".css",
+    ".vue",
+)
+
+
+def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    target_raw = None
+    for k in (
+        "file_path",
+        "path",
+        "TargetFile",
+        "target_file",
+        "filename",
+        "file",
+        "notebook_path",
+        "AbsolutePath",
+    ):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            target_raw = v
+            break
+
+    cmd = None
+    for k in ("command", "CommandLine", "cmd", "input"):
+        v = tool_input.get(k)
+        if isinstance(v, str) and v:
+            cmd = v
+            break
+
+    name_lower = name.lower()
+    is_test_run = False
+    if cmd and _TEST_CMD_RE.search(cmd):
+        is_test_run = True
+
+    is_edit = name_lower in (
+        "edit",
+        "str_replace_editor",
+        "write_to_file",
+        "replace_file_content",
+        "create_file",
+        "modify_file_content",
+        "save_file",
+        "patch",
+    ) or (
+        name_lower.startswith("edit")
+        or name_lower.startswith("write")
+        or name_lower.startswith("replace")
+    )
+    is_view = name_lower in (
+        "view",
+        "view_file",
+        "read_file",
+        "cat",
+        "open_file",
+        "get_file_contents",
+    ) or (name_lower.startswith("view") or name_lower.startswith("read"))
+
+    is_test_file = bool(target_raw and _TEST_FILE_RE.search(target_raw))
+    is_src_file = bool(
+        target_raw
+        and any(target_raw.lower().endswith(ext) for ext in _SOURCE_FILE_EXTS)
+        and not is_test_file
+    )
+
+    return {
+        "raw_target": target_raw,
+        "is_test_run": is_test_run,
+        "is_edit": is_edit,
+        "is_view": is_view,
+        "is_test_file": is_test_file,
+        "is_src_file": is_src_file,
+    }
+
+
 def _measure(body: Any) -> int:
     """A tool_result body -> its size in byte-equivalents, with images priced as images.
 
@@ -256,6 +361,7 @@ def _scan(root: str) -> List[Dict[str, Any]]:
         # tool_use_id -> short hash of the result content, so the de-dup lever can prove
         # "already in context" instead of inferring it from a matching path.
         result_digests: Dict[str, str] = {}
+        result_errors: Dict[str, bool] = {}
         seen_ids: Dict[str, int] = {}  # message id -> index of its turn in `turns`
         cwds: List[str] = []
         # The timeline `time_budget` and `parked` read: (start, kind, tool names, end). Only
@@ -304,10 +410,16 @@ def _scan(root: str) -> List[Dict[str, Any]]:
                                 ):
                                     saw_result = True
                                     body = b.get("content")
-                                    result_bytes[b.get("tool_use_id")] = _measure(body)
-                                    dg = _digest(body)
-                                    if dg:
-                                        result_digests[b.get("tool_use_id")] = dg
+                                    tid = b.get("tool_use_id")
+                                    if tid:
+                                        result_bytes[tid] = _measure(body)
+                                        dg = _digest(body)
+                                        if dg:
+                                            result_digests[tid] = dg
+                                        if b.get("is_error") or str(
+                                            b.get("status", "")
+                                        ).lower() in ("error", "failed"):
+                                            result_errors[tid] = True
                         # A tool finishing and a human typing are both "user" records and
                         # they mean opposite things about who the session is waiting on.
                         at = _epoch(rec.get("timestamp"))
@@ -330,12 +442,19 @@ def _scan(root: str) -> List[Dict[str, Any]]:
                         if bt == "tool_use":
                             ti = b.get("input") or {}
                             nm = b.get("name") or "?"
+                            cl = _classify_call(nm, ti)
                             calls.append(
                                 {
                                     "id": b.get("id"),
                                     "name": nm,
                                     "target": _target(ti),
                                     "sig": _sig(nm, ti),
+                                    "raw_target": cl["raw_target"],
+                                    "is_test_run": cl["is_test_run"],
+                                    "is_edit": cl["is_edit"],
+                                    "is_view": cl["is_view"],
+                                    "is_test_file": cl["is_test_file"],
+                                    "is_src_file": cl["is_src_file"],
                                 }
                             )
                     turn = {
@@ -382,12 +501,15 @@ def _scan(root: str) -> List[Dict[str, Any]]:
         for t in turns:
             for c in t["calls"]:
                 cid = c.pop("id", None)
-                n = result_bytes.get(cid)
-                if n is not None:
-                    c["result_bytes"] = n
-                dg = result_digests.get(cid)
-                if dg:
-                    c["digest"] = dg
+                if cid is not None:
+                    n = result_bytes.get(cid)
+                    if n is not None:
+                        c["result_bytes"] = n
+                    dg = result_digests.get(cid)
+                    if dg:
+                        c["digest"] = dg
+                    if cid in result_errors:
+                        c["is_error"] = True
         # Assistant events are derived here rather than inside the loop above: a turn's
         # ``tool_use`` blocks can be spread across several records sharing one message id (see
         # the docstring), so the complete call list only exists once the join is done. Reading
@@ -464,6 +586,7 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
 
         result_bytes: Dict[str, int] = {}
         result_digests: Dict[str, str] = {}
+        result_errors: Dict[str, bool] = {}
 
         first_snippet: str = ""
         try:
@@ -504,6 +627,13 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                         dg = _digest(body)
                         if dg:
                             result_digests[tid] = dg
+                        is_err = (
+                            str(rec.get("status", "")).upper() in ("ERROR", "FAILED")
+                            or bool(rec.get("error"))
+                            or bool(rec.get("is_error"))
+                        )
+                        if is_err:
+                            result_errors[tid] = True
                         events.append((at, "tool_result", (), at))
                         continue
 
@@ -525,12 +655,19 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                                 nm = tc.get("name") or "tool"
                                 args = tc.get("args") or tc.get("input") or {}
                                 call_id = tc.get("id") or f"call_{len(turns)}_{idx_c}"
+                                cl = _classify_call(nm, args)
                                 calls.append(
                                     {
                                         "id": call_id,
                                         "name": nm,
                                         "target": _target(args),
                                         "sig": _sig(nm, args),
+                                        "raw_target": cl["raw_target"],
+                                        "is_test_run": cl["is_test_run"],
+                                        "is_edit": cl["is_edit"],
+                                        "is_view": cl["is_view"],
+                                        "is_test_file": cl["is_test_file"],
+                                        "is_src_file": cl["is_src_file"],
                                     }
                                 )
 
@@ -594,6 +731,8 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                         c["result_bytes"] = result_bytes[cid_tag]
                     if cid_tag and cid_tag in result_digests:
                         c["digest"] = result_digests[cid_tag]
+                    if cid_tag and cid_tag in result_errors:
+                        c["is_error"] = True
 
             events.sort(key=lambda e: e[0])
             name = f"agy_{cid[:8]}" if cid else f"agy_{len(sessions)+1}"
@@ -634,6 +773,7 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
 
         result_bytes: Dict[str, int] = {}
         result_digests: Dict[str, str] = {}
+        result_errors: Dict[str, bool] = {}
         first_snippet: str = ""
 
         try:
@@ -732,12 +872,19 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         or payload.get("id")
                         or f"call_{len(turns)}_{len(current_calls)}"
                     )
+                    cl = _classify_call(nm, args)
                     current_calls.append(
                         {
                             "id": cid,
                             "name": nm,
                             "target": _target(args),
                             "sig": _sig(nm, args),
+                            "raw_target": cl["raw_target"],
+                            "is_test_run": cl["is_test_run"],
+                            "is_edit": cl["is_edit"],
+                            "is_view": cl["is_view"],
+                            "is_test_file": cl["is_test_file"],
+                            "is_src_file": cl["is_src_file"],
                         }
                     )
                     continue
@@ -750,6 +897,13 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         dg = _digest(out_body)
                         if dg:
                             result_digests[cid] = dg
+                        if (
+                            payload.get("exit_code") not in (None, 0)
+                            or bool(payload.get("is_error"))
+                            or str(payload.get("status", "")).lower()
+                            in ("error", "failed")
+                        ):
+                            result_errors[cid] = True
                     events.append((at, "tool_result", (), at))
                     continue
 
@@ -842,6 +996,12 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                     dg = _digest(body)
                     if dg:
                         result_digests[tid] = dg
+                    if (
+                        rec.get("exit_code") not in (None, 0)
+                        or bool(rec.get("is_error"))
+                        or str(rec.get("status", "")).lower() in ("error", "failed")
+                    ):
+                        result_errors[tid] = True
                     events.append((at, "tool_result", (), at))
                     continue
 
@@ -883,12 +1043,19 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                                 except Exception:
                                     args = {"raw": args}
                             call_id = tc.get("id") or f"call_{len(turns)}_{idx_c}"
+                            cl = _classify_call(nm, args)
                             calls.append(
                                 {
                                     "id": call_id,
                                     "name": nm,
                                     "target": _target(args),
                                     "sig": _sig(nm, args),
+                                    "raw_target": cl["raw_target"],
+                                    "is_test_run": cl["is_test_run"],
+                                    "is_edit": cl["is_edit"],
+                                    "is_view": cl["is_view"],
+                                    "is_test_file": cl["is_test_file"],
+                                    "is_src_file": cl["is_src_file"],
                                 }
                             )
 
@@ -965,6 +1132,8 @@ def _scan_codex(root: str) -> List[Dict[str, Any]]:
                         c["result_bytes"] = result_bytes[cid_tag]
                     if cid_tag and cid_tag in result_digests:
                         c["digest"] = result_digests[cid_tag]
+                    if cid_tag and cid_tag in result_errors:
+                        c["is_error"] = True
 
             if not first_snippet:
                 try:
@@ -1810,6 +1979,203 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     return agg
 
 
+# ------------------------------------------------- code quality & reliability metrics
+
+
+def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculates unified code quality, verification hygiene, and reliability metrics.
+
+    Evaluates across all agent sessions:
+    - Verification Hygiene: share of editing sessions running test suites / linters.
+    - Edit Thrash / Rework: files modified 3+ times within a single session.
+    - First-Pass Success Rate (FSR): share of tool executions with zero errors on initial run.
+    - Error Healing Latency: average conversation turns to resolve tool execution errors.
+    - Redundant File Reads: consecutive duplicate view/reads of unchanged files.
+    - Test-to-Code Ratio: ratio of test file edits vs source file edits.
+    - Composite Score: 0-100 overall quality and reliability index.
+    """
+    total_sessions = len(sess)
+    if not total_sessions:
+        return {
+            "available": False,
+            "quality_score": 100,
+            "grade": "A",
+            "verification_rate": 1.0,
+            "verification_rate_pct": 100.0,
+            "first_pass_success_rate": 1.0,
+            "first_pass_success_rate_pct": 100.0,
+            "tool_error_rate": 0.0,
+            "tool_error_rate_pct": 0.0,
+            "total_edits": 0,
+            "total_tests": 0,
+            "total_tool_calls": 0,
+            "thrashed_files_count": 0,
+            "thrashed_files_list": [],
+            "rework_thrash_rate": 0.0,
+            "rework_thrash_rate_pct": 0.0,
+            "redundant_reads_count": 0,
+            "avg_error_recovery_turns": 1.0,
+            "test_to_code_ratio": 1.0,
+            "sessions_with_edits": 0,
+            "sessions_with_tests": 0,
+        }
+
+    sessions_with_edits = 0
+    sessions_with_tests = 0
+    total_edits = 0
+    total_tests = 0
+    total_tool_calls = 0
+    failed_tool_calls = 0
+    redundant_reads_count = 0
+    test_edits_count = 0
+    src_edits_count = 0
+
+    all_thrashed_files = set()
+    recovery_turns_list = []
+
+    for s in sess:
+        turns = s.get("turns") or []
+        session_has_edit = False
+        session_has_test = False
+        session_file_edits: Dict[str, int] = {}
+        last_view_sig: Optional[str] = None
+        pending_error_turn: Optional[int] = None
+
+        for turn_idx, t in enumerate(turns):
+            turn_has_error = False
+            for c in t.get("calls") or []:
+                total_tool_calls += 1
+                is_err = bool(c.get("is_error"))
+                if is_err:
+                    failed_tool_calls += 1
+                    turn_has_error = True
+
+                if c.get("is_test_run"):
+                    session_has_test = True
+                    total_tests += 1
+
+                if c.get("is_edit"):
+                    session_has_edit = True
+                    total_edits += 1
+                    raw_t = c.get("raw_target") or c.get("target") or "unknown"
+                    session_file_edits[raw_t] = session_file_edits.get(raw_t, 0) + 1
+                    if c.get("is_test_file"):
+                        test_edits_count += 1
+                    elif c.get("is_src_file"):
+                        src_edits_count += 1
+                    # A file edit invalidates previous view cache
+                    last_view_sig = None
+
+                if c.get("is_view"):
+                    view_sig = (
+                        c.get("sig")
+                        or c.get("digest")
+                        or c.get("raw_target")
+                        or c.get("target")
+                    )
+                    if view_sig and view_sig == last_view_sig:
+                        redundant_reads_count += 1
+                    last_view_sig = view_sig
+
+            if turn_has_error:
+                if pending_error_turn is None:
+                    pending_error_turn = turn_idx
+            elif pending_error_turn is not None:
+                recovery_turns_list.append(max(1, turn_idx - pending_error_turn))
+                pending_error_turn = None
+
+        if session_has_edit:
+            sessions_with_edits += 1
+        if session_has_test:
+            sessions_with_tests += 1
+
+        for fpath, count in session_file_edits.items():
+            if count >= 3:
+                all_thrashed_files.add(fpath)
+
+    thrashed_files_count = len(all_thrashed_files)
+    verification_rate = (
+        (sessions_with_tests / sessions_with_edits)
+        if sessions_with_edits > 0
+        else (1.0 if not total_edits else 0.0)
+    )
+
+    first_pass_success_rate = (
+        ((total_tool_calls - failed_tool_calls) / total_tool_calls)
+        if total_tool_calls > 0
+        else 1.0
+    )
+
+    tool_error_rate = (
+        (failed_tool_calls / total_tool_calls)
+        if total_tool_calls > 0
+        else 0.0
+    )
+
+    rework_thrash_rate = (
+        (thrashed_files_count / max(1, len(all_thrashed_files) + total_edits))
+        if total_edits > 0
+        else 0.0
+    )
+
+    test_to_code_ratio = (
+        (test_edits_count / src_edits_count)
+        if src_edits_count > 0
+        else (1.0 if test_edits_count > 0 else 0.5)
+    )
+
+    avg_error_recovery_turns = (
+        (sum(recovery_turns_list) / len(recovery_turns_list))
+        if recovery_turns_list
+        else 1.0
+    )
+
+    # Score calculation (0-100)
+    # Verification: 35%, FSR: 35%, Thrash Freedom: 15%, Test/Code balance: 15%
+    raw_score = (
+        0.35 * verification_rate
+        + 0.35 * first_pass_success_rate
+        + 0.15 * max(0.0, 1.0 - (rework_thrash_rate * 2))
+        + 0.15 * min(1.0, test_to_code_ratio)
+    ) * 100.0
+
+    quality_score = max(0, min(100, int(round(raw_score))))
+    if quality_score >= 90:
+        grade = "A"
+    elif quality_score >= 80:
+        grade = "B"
+    elif quality_score >= 70:
+        grade = "C"
+    elif quality_score >= 60:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return {
+        "available": True,
+        "quality_score": quality_score,
+        "grade": grade,
+        "verification_rate": round(verification_rate, 4),
+        "verification_rate_pct": round(verification_rate * 100.0, 1),
+        "first_pass_success_rate": round(first_pass_success_rate, 4),
+        "first_pass_success_rate_pct": round(first_pass_success_rate * 100.0, 1),
+        "tool_error_rate": round(tool_error_rate, 4),
+        "tool_error_rate_pct": round(tool_error_rate * 100.0, 1),
+        "total_edits": total_edits,
+        "total_tests": total_tests,
+        "total_tool_calls": total_tool_calls,
+        "thrashed_files_count": thrashed_files_count,
+        "thrashed_files_list": sorted(list(all_thrashed_files))[:10],
+        "rework_thrash_rate": round(rework_thrash_rate, 4),
+        "rework_thrash_rate_pct": round(rework_thrash_rate * 100.0, 1),
+        "redundant_reads_count": redundant_reads_count,
+        "avg_error_recovery_turns": round(avg_error_recovery_turns, 1),
+        "test_to_code_ratio": round(test_to_code_ratio, 2),
+        "sessions_with_edits": sessions_with_edits,
+        "sessions_with_tests": sessions_with_tests,
+    }
+
+
 # ------------------------------------------------- time budget (docs/analysis_docs §1 and §2)
 
 # Declared order is presentation order for ties; the payload sorts by size.
@@ -2140,6 +2506,37 @@ def recommendations(
                 )
             )
 
+    # 4. Code Quality & Test Hygiene Recommendations
+    if sess is not None:
+        qm = quality_metrics(sess)
+        if (
+            qm.get("sessions_with_edits", 0) > 0
+            and qm.get("verification_rate", 1.0) < 0.5
+        ):
+            recs.append(
+                _rec(
+                    "Low test verification hygiene in agent sessions",
+                    f"Only {qm.get('verification_rate_pct', 0)}% of sessions with code edits ran automated test suites. "
+                    f"Running test/lint passes before finishing turns reduces runtime bugs and catches regressions early.",
+                    f"{qm.get('sessions_with_tests', 0)} of {qm.get('sessions_with_edits', 0)} editing sessions verified",
+                    "LOW",
+                    f"{round((1.0 - qm.get('verification_rate', 0.0)) * 100, 1)}% unverified",
+                    "of editing sessions",
+                )
+            )
+        if qm.get("thrashed_files_count", 0) >= 3:
+            recs.append(
+                _rec(
+                    f"File edit thrashing detected on {qm.get('thrashed_files_count')} files",
+                    "Agent modified the same files 3+ times in single sessions. Providing more explicit prompt instructions, "
+                    "specifying test fixtures, or decomposing tasks into smaller subagents reduces edit churn.",
+                    f"{qm.get('thrashed_files_count')} thrashed files across scope",
+                    "MED",
+                    f"{qm.get('rework_thrash_rate_pct')}% thrash",
+                    "churn rate",
+                )
+            )
+
     if not recs:
         recs.append(
             _rec(
@@ -2444,6 +2841,35 @@ _build_cache: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
 _BUILD_CACHE_MAX = 32
 
 
+def _lever_rail_payload(scoped: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The live half of the lever rail, or a payload saying why there isn't one.
+
+    Imported lazily and wrapped: ``ace.sidecar.levers`` discovers third-party packages, and
+    nothing a stranger's distribution does at import time may take this dashboard down. A
+    failure here costs the live column and leaves every measured figure on the page intact.
+    """
+    try:
+        from ace.sidecar.levers.rail import rail_payload
+
+        return rail_payload(scoped)
+    except Exception:
+        log.warning("[levers] rail payload failed; rendering headroom only", exc_info=True)
+        return {"status": "no_package", "note": "lever rail unavailable", "installed": []}
+
+
+def _refresh_lever_rail(payload: Dict[str, Any], store: Any) -> Dict[str, Any]:
+    """Live half of the lever rail, re-read from the telemetry store. Never raises."""
+    if store is None or not payload:
+        return payload
+    try:
+        from ace.sidecar.levers.rail import refresh_measured
+
+        return refresh_measured(payload, store)
+    except Exception:
+        log.warning("[levers] measured rail refresh failed", exc_info=True)
+        return payload
+
+
 def _build_payload(
     all_sessions: List[Dict[str, Any]],
     capture: Optional[Dict[str, Any]],
@@ -2471,6 +2897,7 @@ def _build_payload(
         "agent_breakdown": ab,
         "span": span(range_key, window, agg),
         "historical": agg,
+        "quality": quality_metrics(scoped),
         "time": time_budget(scoped),
         "parked": parked(scoped),
         "fleet": _fleet,
@@ -2478,6 +2905,11 @@ def _build_payload(
         "scorecards": (
             scorecards(scoped, agg.get("cost_usd") or 0.0) if agg["available"] else None
         ),
+        # The *measured* half of the lever rail, beside `scorecards`' simulated headroom.
+        # The two are different claims and the renderer must not merge them: headroom is a
+        # byte-turn estimate of what a lever would be worth, `levers` is what an installed
+        # one actually measured. Its `status` says which of the two exists.
+        "levers": _lever_rail_payload(scoped),
         "files": session_files(agent=agent, all_sessions=all_sessions),
         "capture": capture or {},
         "recommendations": recommendations(agg, capture, sess=scoped),
@@ -2541,6 +2973,11 @@ def build(
     # live keys below are per-request and must not be written into the shared cached dict.
     out = dict(payload)
     out["live"] = store.summary() if store is not None else {"turns": 0}
+    # Re-read for the same reason `live` is: the measured lever rail moves on every proxied
+    # turn, while the payload around it is memoised on a transcript fingerprint that a
+    # proxied turn does not change. Cached with the rest, the one live number on the rail
+    # would be frozen at whatever it read when the transcripts last changed.
+    out["levers"] = _refresh_lever_rail(out.get("levers") or {}, store)
     out["recent"] = store.recent(30) if store is not None else []
     return out
 
@@ -2685,6 +3122,40 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     lines.append("# HELP ace_installed_skills_total Number of active workflow skills installed.")
     lines.append("# TYPE ace_installed_skills_total gauge")
     lines.append(f'ace_installed_skills_total {len(skills)}')
+
+    # Code Quality & Reliability Metrics
+    qm = d.get("quality") or {}
+    lines.append("# HELP ace_quality_score Composite code quality and verification score (0-100).")
+    lines.append("# TYPE ace_quality_score gauge")
+    lines.append(f'ace_quality_score {qm.get("quality_score", 100)}')
+
+    lines.append("# HELP ace_quality_verification_rate Share of edited sessions that ran automated tests or linters.")
+    lines.append("# TYPE ace_quality_verification_rate gauge")
+    lines.append(f'ace_quality_verification_rate {qm.get("verification_rate", 1.0)}')
+
+    lines.append("# HELP ace_quality_first_pass_success_rate Share of tool calls that succeeded on first pass.")
+    lines.append("# TYPE ace_quality_first_pass_success_rate gauge")
+    lines.append(f'ace_quality_first_pass_success_rate {qm.get("first_pass_success_rate", 1.0)}')
+
+    lines.append("# HELP ace_quality_tool_error_rate Share of tool executions that returned errors.")
+    lines.append("# TYPE ace_quality_tool_error_rate gauge")
+    lines.append(f'ace_quality_tool_error_rate {qm.get("tool_error_rate", 0.0)}')
+
+    lines.append("# HELP ace_quality_thrashed_files_total Number of files edited 3 or more times in a single session.")
+    lines.append("# TYPE ace_quality_thrashed_files_total counter")
+    lines.append(f'ace_quality_thrashed_files_total {qm.get("thrashed_files_count", 0)}')
+
+    lines.append("# HELP ace_quality_redundant_reads_total Count of consecutive duplicate file reads.")
+    lines.append("# TYPE ace_quality_redundant_reads_total counter")
+    lines.append(f'ace_quality_redundant_reads_total {qm.get("redundant_reads_count", 0)}')
+
+    lines.append("# HELP ace_quality_error_recovery_turns_avg Average turns to recover from an execution error.")
+    lines.append("# TYPE ace_quality_error_recovery_turns_avg gauge")
+    lines.append(f'ace_quality_error_recovery_turns_avg {qm.get("avg_error_recovery_turns", 1.0)}')
+
+    lines.append("# HELP ace_quality_test_to_code_ratio Ratio of test file edits to source file edits.")
+    lines.append("# TYPE ace_quality_test_to_code_ratio gauge")
+    lines.append(f'ace_quality_test_to_code_ratio {qm.get("test_to_code_ratio", 1.0)}')
 
     return "\n".join(lines) + "\n"
 

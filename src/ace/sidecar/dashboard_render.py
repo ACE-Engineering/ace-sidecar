@@ -714,6 +714,116 @@ def _activity_svg(daily: List[Dict[str, Any]], commits: bool) -> str:
     )
 
 
+def _quality(qm: Optional[Dict[str, Any]]) -> str:
+    """§ 02 — Code quality, verification hygiene, and agent execution reliability."""
+    if not qm or not qm.get("available"):
+        return (
+            "<div class='pan'><div class='ph'><span>~/ace/code_quality</span>"
+            "<span class='live calc'><i></i>NO SESSIONS</span></div><div class='pb'>"
+            "<div class='exp'>No session data available in this scope to compute code quality metrics. "
+            "Metrics will populate as coding agent sessions run and edit workspace files.</div></div></div>"
+        )
+
+    score = qm.get("quality_score", 100)
+    grade = qm.get("grade", "A")
+    v_rate = qm.get("verification_rate_pct", 100.0)
+    fsr = qm.get("first_pass_success_rate_pct", 100.0)
+    err_rate = qm.get("tool_error_rate_pct", 0.0)
+    thrash_cnt = qm.get("thrashed_files_count", 0)
+    recovery_turns = qm.get("avg_error_recovery_turns", 1.0)
+    redundant_reads = qm.get("redundant_reads_count", 0)
+    test_code_ratio = qm.get("test_to_code_ratio", 1.0)
+    sessions_edits = qm.get("sessions_with_edits", 0)
+    sessions_tests = qm.get("sessions_with_tests", 0)
+
+    score_color = (
+        "var(--mint)"
+        if score >= 80
+        else ("var(--gold)" if score >= 60 else "var(--crit)")
+    )
+    v_cls = "" if v_rate >= 75 else ("warn" if v_rate >= 50 else "crit")
+    fsr_cls = "" if fsr >= 85 else ("warn" if fsr >= 70 else "crit")
+    thrash_cls = "" if thrash_cnt == 0 else ("warn" if thrash_cnt <= 2 else "crit")
+
+    tiles = [
+        _st(
+            "quality_score",
+            f"<span style='color:{score_color}'>{score}</span><span style='font-size:0.6em;color:var(--ink-3);margin-left:4px'>/ 100</span>",
+            f"Grade {grade}",
+            delta="COMPOSITE",
+            title="Weighted reliability index across verification hygiene (35%), first-pass tool success (35%), edit stability (15%), and test balance (15%).",
+        ),
+        _st(
+            "verification_rate",
+            f"{v_rate}%",
+            f"{sessions_tests} of {sessions_edits} edit sessions",
+            delta="TEST HYGIENE",
+            dcls=v_cls,
+            title="Percentage of sessions containing file modifications that executed an automated test runner or linter (pytest, npm test, ruff, etc.).",
+        ),
+        _st(
+            "first_pass_success",
+            f"{fsr}%",
+            f"{err_rate}% error rate",
+            delta="TOOL RELIABILITY",
+            dcls=fsr_cls,
+            title="Share of tool executions that succeeded on their first attempt without returning execution errors or non-zero exit codes.",
+        ),
+        _st(
+            "edit_thrash_files",
+            f"{thrash_cnt}",
+            f"{qm.get('total_edits', 0)} total file edits",
+            delta="REWORK CHURN",
+            dcls=thrash_cls,
+            title="Files edited 3 or more times within the same session, indicating thrashing or lack of convergence.",
+        ),
+        _st(
+            "healing_latency",
+            f"{recovery_turns} turns",
+            "avg turns to recover",
+            delta="ERROR HEALING",
+            title="Average number of conversation turns required for the agent to resolve a failed tool execution and resume forward progress.",
+        ),
+        _st(
+            "context_waste",
+            f"{redundant_reads} reads",
+            f"test/code ratio: {test_code_ratio}x",
+            delta="REDUNDANCY",
+            title="Consecutive duplicate reads of identical files without intervening edits.",
+        ),
+    ]
+
+    thrashed_files_list = qm.get("thrashed_files_list") or []
+    thrash_html = ""
+    if thrashed_files_list:
+        thrashed_items = "".join(
+            f"<li><code>{escape(_mask_home(f))}</code></li>"
+            for f in thrashed_files_list
+        )
+        thrash_html = (
+            f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid #3d3014;border-radius:4px;'>"
+            f"<b style='color:var(--gold);font-size:12px;'>⚠️ Repeatedly Modified Files (Thrashing Detected):</b>"
+            f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{thrashed_items}</ul>"
+            f"</div>"
+        )
+
+    return (
+        f"<div class='grid'>{''.join(tiles)}</div>"
+        f"<div class='pan' style='margin-top:14px;'>"
+        f"<div class='ph'><span>~/ace/quality_breakdown</span><span class='live'><i></i>LOCAL VERIFIED</span></div>"
+        f"<div class='pb'>"
+        f"<div style='display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);'>"
+        f"<div><b style='color:var(--ink);'>{sessions_tests}</b> test-verified sessions</div>"
+        f"<div><b style='color:var(--ink);'>{sessions_edits}</b> editing sessions</div>"
+        f"<div><b style='color:var(--ink);'>{qm.get('total_tool_calls', 0)}</b> total tool executions</div>"
+        f"<div><b style='color:var(--ink);'>{redundant_reads}</b> redundant duplicate file reads</div>"
+        f"</div>"
+        f"{thrash_html}"
+        f"<div class='exp'>Measures how safely and stably coding agents operate in your repository. High verification rates and low thrash indicate clean first-pass execution without prompt churn.</div>"
+        f"</div></div>"
+    )
+
+
 def _fleet(f: Optional[Dict[str, Any]]) -> str:
     """§ 01 — the eleven fleet metrics from docs/22 §0, on this machine's transcripts.
 
@@ -1597,6 +1707,7 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
 # the same reasoning that keeps _sec's id keyed off the section number.
 _NAV = (
     ("◫", "Overview", "01"),
+    ("🎯", "Code Quality", "02"),
     ("⇄", "Strategies", "04"),
     ("✦", "Recommendations", "06"),
     ("⚡", "Workflow Skills", "07"),
@@ -1822,7 +1933,7 @@ _GITHUB_ICON = (
 
 
 def _rail(d: Dict[str, Any]) -> str:
-    live = d["live"]
+    live = d.get("live") or {"turns": 0}
     # Each entry jumps to a section already on the page -- one document, not five views.
     # Anchors rather than divs: clickable without JS.
     nav = "".join(
@@ -1981,11 +2092,23 @@ def render(d: Dict[str, Any]) -> str:
     # on to "what it cost" and "what to do about it".
     b.append(_fleet(d.get("fleet")))
 
-    peak = h.get("peak_context") or 0
-    # § 02 — spend
+    # § 02 — code quality & reliability
     b.append(
         _sec(
             "02",
+            "CODE QUALITY & RELIABILITY",
+            "Agent execution stability & test hygiene.",
+            "Verification rate, rework thrash, and error recovery.",
+            "LOCAL",
+        )
+    )
+    b.append(_quality(d.get("quality")))
+
+    peak = h.get("peak_context") or 0
+    # § 03 — spend
+    b.append(
+        _sec(
+            "03",
             "SPEND",
             "Where the money goes.",
             "List price on your transcripts.",

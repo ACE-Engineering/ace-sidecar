@@ -75,6 +75,26 @@ def build_sidecar_app(
         mode=MODE_LOOPBACK, local_api_key=api_key or auth_env.local_api_key
     )
 
+    # The measured half of the lever rail. Constructed unconditionally and cheap when nothing
+    # is installed — `ShadowRunner.enabled` is one cached entry-point lookup — so the
+    # open-source sidecar on its own pays nothing for a feature it does not have.
+    #
+    # Its sink is the telemetry store, which is the whole point of item 4: a lever result is
+    # produced once, in a background task moments after a response is served, and without a
+    # row in `lever_turns` it is logged and lost.
+    shadow = None
+    try:
+        from ace.sidecar.levers.shadow import ShadowRunner
+
+        sink = (
+            accountant.record_lever_turns
+            if hasattr(accountant, "record_lever_turns")
+            else None
+        )
+        shadow = ShadowRunner(sink=sink)
+    except Exception:  # pragma: no cover - levers never block the sidecar starting
+        log.debug("[sidecar] lever shadow runner unavailable", exc_info=True)
+
     install_messages_route(
         app,
         config=cfg,
@@ -82,6 +102,7 @@ def build_sidecar_app(
         accountant=accountant,
         capture=capture,
         client=client,
+        shadow=shadow,
     )
 
     @app.get("/dashboard", response_class=HTMLResponse)
