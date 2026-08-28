@@ -15,6 +15,7 @@ route's suite uses.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import sqlite3
 
@@ -37,6 +38,16 @@ from ace.sidecar.levers.shadow import (
 from ace.sidecar.levers.types import Usage
 
 DUMP = "ERROR line\n" * 3000
+
+# The splice mechanics live in `ace-skills`, which the sidecar deliberately does not depend on
+# (see `test_the_sidecar_still_works_with_no_lever_package_installed`). Without it `actuate`
+# refuses by design and returns the original bytes, so the two tests that assert bytes actually
+# CHANGED have nothing to observe — skip them rather than assert a behaviour this install
+# cannot have. Everything else here, actuation's refusals included, still runs.
+needs_splice = pytest.mark.skipif(
+    importlib.util.find_spec("ace_skills") is None,
+    reason="actuation needs ace-skills' splice mechanics",
+)
 
 
 def body(dump=DUMP):
@@ -640,6 +651,7 @@ def test_actuation_is_off_unless_a_lever_says_on(store):
     assert seen["body"] == sent, "shadow mode must relay byte-for-byte"
 
 
+@needs_splice
 def test_actuation_splices_the_tail_and_leaves_the_cached_prefix_alone(store):
     """The whole design in one assertion: fewer bytes upstream, prefix untouched."""
     seen = {}
@@ -687,6 +699,7 @@ def test_actuation_preserves_the_fields_a_round_trip_would_lose(store):
     assert new["messages"][2]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
+@needs_splice
 def test_a_splice_before_the_breakpoint_is_refused_not_applied(store):
     """The guard is a byte-offset comparison, not a claim about the lever's intent — TruncAll
     proposes on cached history and the splice layer is what says no."""
