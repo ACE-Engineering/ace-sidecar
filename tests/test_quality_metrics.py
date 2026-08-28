@@ -347,4 +347,4 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert "Claude Code" in html or "claude" in html
     assert "claude-sonnet-4-6" in html
     assert "gemini-3.6-flash" in html
-    assert "engine / model" in html
+    assert "ENGINE / MODEL" in html

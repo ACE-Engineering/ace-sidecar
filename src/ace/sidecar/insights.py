@@ -153,6 +153,11 @@ _TEST_CMD_RE = re.compile(
     re.IGNORECASE,
 )
 
+_ERR_MSG_RE = re.compile(
+    r"(encountered error in tool execution|the command exited with code [1-9]|exit code [1-9]|operation not permitted|command failed|fatal:|traceback \(most recent call last\)|syntaxerror|typeerror|keyerror|assertionerror|modulenotfounderror|permission denied|no such file or directory)",
+    re.IGNORECASE,
+)
+
 _TEST_FILE_RE = re.compile(
     r"(^|[/\\])(tests?|spec|__tests__)[/\\]|(\.|_)(test|spec)\.[a-zA-Z0-9]+$",
     re.IGNORECASE,
@@ -612,29 +617,7 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                             if text and not text.startswith("<"):
                                 first_snippet = text[:110]
                         events.append((at, "prompt", (), at))
-                        continue
-
-                    if stype in ("TOOL_RESULT", "SYSTEM_RESULT"):
-                        body = (
-                            rec.get("content") or rec.get("output") or rec.get("result")
-                        )
-                        tid = (
-                            rec.get("tool_use_id")
-                            or rec.get("call_id")
-                            or f"call_{len(events)}"
-                        )
-                        result_bytes[tid] = _measure(body)
-                        dg = _digest(body)
-                        if dg:
-                            result_digests[tid] = dg
-                        is_err = (
-                            str(rec.get("status", "")).upper() in ("ERROR", "FAILED")
-                            or bool(rec.get("error"))
-                            or bool(rec.get("is_error"))
-                        )
-                        if is_err:
-                            result_errors[tid] = True
-                        events.append((at, "tool_result", (), at))
+                        current_turn_calls = None
                         continue
 
                     if (
@@ -654,11 +637,9 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                             if isinstance(tc, dict):
                                 nm = tc.get("name") or "tool"
                                 args = tc.get("args") or tc.get("input") or {}
-                                call_id = tc.get("id") or f"call_{len(turns)}_{idx_c}"
                                 cl = _classify_call(nm, args)
                                 calls.append(
                                     {
-                                        "id": call_id,
                                         "name": nm,
                                         "target": _target(args),
                                         "sig": _sig(nm, args),
@@ -668,6 +649,7 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                                         "is_view": cl["is_view"],
                                         "is_test_file": cl["is_test_file"],
                                         "is_src_file": cl["is_src_file"],
+                                        "is_error": False,
                                     }
                                 )
 
@@ -717,26 +699,40 @@ def _scan_antigravity(root: str) -> List[Dict[str, Any]]:
                             ),
                         }
                         turns.append(turn)
+                        current_turn_calls = calls if calls else None
                         events.append(
                             (at, "assistant", tuple(c["name"] for c in calls), at)
                         )
+                        continue
+
+                    if current_turn_calls and (
+                        stype in ("GENERIC", "TOOL_RESULT", "SYSTEM_MESSAGE", "SYSTEM_RESULT")
+                        or ssource in ("SYSTEM", "MODEL")
+                    ):
+                        body = rec.get("content") or rec.get("output") or rec.get("result") or ""
+                        st = str(rec.get("status", "")).upper()
+                        is_err = (
+                            st in ("ERROR", "FAILED")
+                            or bool(rec.get("error"))
+                            or bool(rec.get("is_error"))
+                            or bool(_ERR_MSG_RE.search(str(body)))
+                        )
+                        for c in current_turn_calls:
+                            if is_err:
+                                c["is_error"] = True
+                            c["result_bytes"] = _measure(body)
+                            dg = _digest(body)
+                            if dg:
+                                c["digest"] = dg
+                        events.append((at, "tool_result", (), at))
+                        continue
         except Exception:
             continue
 
         if turns:
-            for t in turns:
-                for c in t["calls"]:
-                    cid_tag = c.pop("id", None)
-                    if cid_tag and cid_tag in result_bytes:
-                        c["result_bytes"] = result_bytes[cid_tag]
-                    if cid_tag and cid_tag in result_digests:
-                        c["digest"] = result_digests[cid_tag]
-                    if cid_tag and cid_tag in result_errors:
-                        c["is_error"] = True
-
             events.sort(key=lambda e: e[0])
             name = f"agy_{cid[:8]}" if cid else f"agy_{len(sessions)+1}"
-            session: Dict[str, Any] = {
+            session = {
                 "session": name,
                 "kind": "main",
                 "agent_type": AGENT_ANTIGRAVITY,
@@ -1989,6 +1985,8 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             "available": False,
             "quality_score": 100,
             "grade": "A",
+            "task_completion_rate": 1.0,
+            "task_completion_rate_pct": 100.0,
             "verification_rate": 1.0,
             "verification_rate_pct": 100.0,
             "first_pass_success_rate": 1.0,
@@ -2002,15 +2000,19 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             "thrashed_files_list": [],
             "rework_thrash_rate": 0.0,
             "rework_thrash_rate_pct": 0.0,
+            "edit_stability": 1.0,
+            "edit_stability_pct": 100.0,
             "redundant_reads_count": 0,
             "avg_error_recovery_turns": 1.0,
             "test_to_code_ratio": 1.0,
             "sessions_with_edits": 0,
             "sessions_with_tests": 0,
+            "clean_completed_sessions": 0,
         }
 
     sessions_with_edits = 0
     sessions_with_tests = 0
+    clean_completed_sessions = 0
     total_edits = 0
     total_tests = 0
     total_tool_calls = 0
@@ -2029,6 +2031,7 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         session_file_edits: Dict[str, int] = {}
         last_view_sig: Optional[str] = None
         pending_error_turn: Optional[int] = None
+        last_turn_had_error = False
 
         for turn_idx, t in enumerate(turns):
             turn_has_error = False
@@ -2080,8 +2083,17 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
                 recovery_turns_list.append(max(1, turn_idx - pending_error_turn))
                 pending_error_turn = None
 
+        if turns and any(c.get("is_error") for c in turns[-1].get("calls") or []):
+            last_turn_had_error = True
+
         if session_has_edit:
             sessions_with_edits += 1
+            if session_has_test and not last_turn_had_error:
+                clean_completed_sessions += 1
+        else:
+            if not last_turn_had_error:
+                clean_completed_sessions += 1
+
         if session_has_test:
             sessions_with_tests += 1
 
@@ -2108,11 +2120,20 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         else 0.0
     )
 
+    task_completion_rate = (
+        (clean_completed_sessions / total_sessions)
+        if total_sessions > 0
+        else 1.0
+    )
+
     rework_thrash_rate = (
         (thrashed_files_count / max(1, len(all_thrashed_files) + total_edits))
         if total_edits > 0
         else 0.0
     )
+
+    thrash_ratio = (thrashed_files_count / max(1, sessions_with_edits)) if sessions_with_edits > 0 else 0.0
+    edit_stability = max(0.0, 1.0 - (thrash_ratio * 1.0))
 
     test_to_code_ratio = (
         (test_edits_count / src_edits_count)
@@ -2126,13 +2147,13 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         else 1.0
     )
 
-    # Score calculation (0-100)
-    # Verification: 35%, FSR: 35%, Thrash Freedom: 15%, Test/Code balance: 15%
+    # Balanced 0-100 score:
+    # 35% Verified Task Completion, 30% Verification Diligence, 20% First-Pass Tool Success, 15% Edit Stability (Thrash-Free)
     raw_score = (
-        0.35 * verification_rate
-        + 0.35 * first_pass_success_rate
-        + 0.15 * max(0.0, 1.0 - (rework_thrash_rate * 2))
-        + 0.15 * min(1.0, test_to_code_ratio)
+        0.35 * task_completion_rate
+        + 0.30 * verification_rate
+        + 0.20 * first_pass_success_rate
+        + 0.15 * edit_stability
     ) * 100.0
 
     quality_score = max(0, min(100, int(round(raw_score))))
@@ -2151,6 +2172,8 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "available": True,
         "quality_score": quality_score,
         "grade": grade,
+        "task_completion_rate": round(task_completion_rate, 4),
+        "task_completion_rate_pct": round(task_completion_rate * 100.0, 1),
         "verification_rate": round(verification_rate, 4),
         "verification_rate_pct": round(verification_rate * 100.0, 1),
         "first_pass_success_rate": round(first_pass_success_rate, 4),
@@ -2164,11 +2187,14 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "thrashed_files_list": sorted(list(all_thrashed_files))[:10],
         "rework_thrash_rate": round(rework_thrash_rate, 4),
         "rework_thrash_rate_pct": round(rework_thrash_rate * 100.0, 1),
+        "edit_stability": round(edit_stability, 4),
+        "edit_stability_pct": round(edit_stability * 100.0, 1),
         "redundant_reads_count": redundant_reads_count,
         "avg_error_recovery_turns": round(avg_error_recovery_turns, 1),
         "test_to_code_ratio": round(test_to_code_ratio, 2),
         "sessions_with_edits": sessions_with_edits,
         "sessions_with_tests": sessions_with_tests,
+        "clean_completed_sessions": clean_completed_sessions,
     }
 
 

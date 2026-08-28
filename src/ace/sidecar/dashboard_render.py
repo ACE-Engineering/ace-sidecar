@@ -726,6 +726,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
 
     score = qm.get("quality_score", 100)
     grade = qm.get("grade", "A")
+    c_rate = qm.get("task_completion_rate_pct", 100.0)
     v_rate = qm.get("verification_rate_pct", 100.0)
     fsr = qm.get("first_pass_success_rate_pct", 100.0)
     err_rate = qm.get("tool_error_rate_pct", 0.0)
@@ -735,15 +736,17 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
     test_code_ratio = qm.get("test_to_code_ratio", 1.0)
     sessions_edits = qm.get("sessions_with_edits", 0)
     sessions_tests = qm.get("sessions_with_tests", 0)
+    clean_completed = qm.get("clean_completed_sessions", 0)
 
     score_color = (
         "var(--mint)"
         if score >= 80
         else ("var(--gold)" if score >= 60 else "var(--crit)")
     )
+    c_cls = "" if c_rate >= 80 else ("warn" if c_rate >= 60 else "crit")
     v_cls = "" if v_rate >= 75 else ("warn" if v_rate >= 50 else "crit")
     fsr_cls = "" if fsr >= 85 else ("warn" if fsr >= 70 else "crit")
-    thrash_cls = "" if thrash_cnt == 0 else ("warn" if thrash_cnt <= 2 else "crit")
+    thrash_cls = "" if thrash_cnt == 0 else ("warn" if thrash_cnt <= 5 else "crit")
 
     tiles = [
         _st(
@@ -751,7 +754,15 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<span style='color:{score_color}'>{score}</span><span style='font-size:0.6em;color:var(--ink-3);margin-left:4px'>/ 100</span>",
             f"Grade {grade}",
             delta="COMPOSITE",
-            title="Weighted reliability index across verification hygiene (35%), first-pass tool success (35%), edit stability (15%), and test balance (15%).",
+            title="Weighted reliability index across task completion (35%), verification hygiene (30%), first-pass tool success (20%), and edit stability (15%).",
+        ),
+        _st(
+            "task_completion",
+            f"{c_rate}%",
+            f"{clean_completed} verified sessions",
+            delta="TASK RESOLUTION",
+            dcls=c_cls,
+            title="Percentage of sessions that resolved cleanly without trailing tool errors or unverified changes.",
         ),
         _st(
             "verification_rate",
@@ -780,16 +791,9 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         _st(
             "healing_latency",
             f"{recovery_turns} turns",
-            "avg turns to recover",
+            f"{redundant_reads} redundant reads",
             delta="ERROR HEALING",
             title="Average number of conversation turns required for the agent to resolve a failed tool execution and resume forward progress.",
-        ),
-        _st(
-            "context_waste",
-            f"{redundant_reads} reads",
-            f"test/code ratio: {test_code_ratio}x",
-            delta="REDUNDANCY",
-            title="Consecutive duplicate reads of identical files without intervening edits.",
         ),
     ]
 
@@ -813,6 +817,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
     for ak, a_info in by_agent.items():
         a_score = a_info.get("quality_score", 100)
         a_grade = a_info.get("grade", "A")
+        a_comp = a_info.get("task_completion_rate_pct", 100.0)
         a_v_rate = a_info.get("verification_rate_pct", 100.0)
         a_fsr = a_info.get("first_pass_success_rate_pct", 100.0)
         a_thrash = a_info.get("thrashed_files_count", 0)
@@ -840,6 +845,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<tr style='border-bottom:1px solid var(--line);'>"
             f"<td style='padding:10px 14px;'><span class='pill' style='{badge_style};font-size:13px;padding:3px 10px;font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
             f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{a_score} ({a_grade})</span></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_comp}%</b></td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_v_rate}%</b></td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_fsr}%</b></td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(a_thrash) + '</b>' if a_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
@@ -854,6 +860,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         m_name = m_info.get("model", "unknown")
         m_score = m_info.get("quality_score", 100)
         m_grade = m_info.get("grade", "A")
+        m_comp = m_info.get("task_completion_rate_pct", 100.0)
         m_v_rate = m_info.get("verification_rate_pct", 100.0)
         m_fsr = m_info.get("first_pass_success_rate_pct", 100.0)
         m_thrash = m_info.get("thrashed_files_count", 0)
@@ -872,6 +879,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<tr style='border-bottom:1px solid var(--line);'>"
             f"<td class='m' style='padding:10px 14px;'><code style='color:var(--ink);font-size:14px;font-weight:500;'>{escape(m_name)}</code></td>"
             f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{m_score} ({m_grade})</span></td>"
+            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_comp}%</td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_v_rate}%</td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_fsr}%</td>"
             f"<td class='num' style='padding:10px 14px;font-size:15px;'>{'<b style=\"color:var(--gold)\">' + str(m_thrash) + '</b>' if m_thrash > 0 else '<span style=\"color:var(--ink-3)\">0</span>'}</td>"
@@ -891,6 +899,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>ENGINE / MODEL</th>"
             f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
+            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
             f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>THRASH FILES</th>"
