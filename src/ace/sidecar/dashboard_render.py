@@ -18,7 +18,7 @@ import json
 import datetime
 import os
 from html import escape
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 try:
@@ -228,6 +228,54 @@ border-radius:3px;padding:13px 16px;margin-bottom:9px}
 .tg.HIGH{color:var(--crit)}.tg.MEDIUM{color:var(--gold)}.tg.NONE{color:var(--mint)}
 .snip{color:var(--ink-4);font-size:11.5px;max-width:330px;overflow:hidden;
 text-overflow:ellipsis;white-space:nowrap}
+/* ---- § 02 breakdown tables ----
+   The two quality comparison tables carry more columns than anything else on the page, so
+   they get their own scale rather than the shared table rules: a mono eyebrow with a
+   hairline rule for the title, group separators so engines never read as models, a fixed
+   width score chip so that column scans as one ruler, and a 2px meter under each rate
+   figure — the rows rank at a glance, before any digit is parsed. */
+.qhd{display:flex;align-items:center;gap:13px;margin:24px 0 9px}
+.qhd .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+color:var(--ink-2);font-weight:500;white-space:nowrap}
+.qhd .r{flex:1;height:1px;background:var(--line)}
+.qhd .n{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);white-space:nowrap}
+.qwrap{border:1px solid var(--line);border-radius:3px;background:var(--surface);overflow-x:auto}
+.qt{width:100%;border-collapse:collapse;font-size:12.5px}
+.qt th{padding:9px 13px;white-space:nowrap;border-bottom:1px solid var(--line-2)}
+.qt td{padding:10px 13px;border-bottom:1px solid var(--line);color:var(--ink-2);
+vertical-align:middle}
+.qt td.num{color:var(--ink)}
+.qt tbody tr:last-child td{border-bottom:0}
+.qt tbody tr:hover td{background:#0F1314}
+/* Group separator. A row, not a second table: the columns must stay in one ruler. */
+.qt tr.grp td{padding:9px 13px 6px;background:var(--surface-2);font-family:var(--mono);
+font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+.qt tr.grp:first-child td{border-top:0}
+.qt tr.grp:hover td{background:var(--surface-2)}
+.qt .nm{color:var(--ink);font-weight:600;white-space:nowrap}
+.qt .nm.row{display:flex;align-items:baseline;gap:7px}
+.qt code.nm{font-family:var(--mono);font-weight:500;font-size:12.5px}
+.qt .sub{color:var(--ink-4);font-size:11px;margin-top:3px;font-weight:400;white-space:normal}
+.qt .shr{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);font-weight:400}
+.qt .u{color:var(--ink-4)}
+.qt td.z{color:var(--ink-4)}
+.eng{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.01em;
+border:1px solid var(--line-2);border-radius:4px;padding:2px 9px;display:inline-block}
+.eng.claude{color:var(--blue);border-color:#1e355b;background:#0d1c33}
+.eng.anti{color:var(--mint);border-color:#1d3b2e;background:var(--good-bg)}
+.eng.codex{color:#C084FC;border-color:#3b1e5b;background:#1a0d33}
+.gr{font-family:var(--mono);font-size:12px;font-weight:700;display:inline-block;min-width:64px;
+text-align:center;padding:2px 0;border:1px solid;border-radius:4px;
+font-variant-numeric:tabular-nums}
+.gr.hi{color:var(--mint);border-color:#1d3b2e;background:var(--good-bg)}
+.gr.mid{color:var(--gold);border-color:#3d3014;background:var(--warn-bg)}
+.gr.lo{color:var(--crit);border-color:#4a1e17;background:#2a110e}
+.mt{display:block;width:74px;margin-left:auto;font-family:var(--mono);
+font-variant-numeric:tabular-nums;letter-spacing:-.01em;color:var(--ink)}
+.mt i{display:block;height:2px;margin-top:5px;border-radius:1px;background:#1B2021}
+.mt i>b{display:block;height:100%;border-radius:1px;background:var(--mint)}
+.mt.mid i>b{background:var(--gold)}
+.mt.lo i>b{background:var(--crit)}
 /* Activity chart. Inline SVG scaled by the container: a strict CSP blocks external chart
    libraries, and the page is server-rendered. Colours come from the shared variables. */
 .chart{display:block;width:100%;height:auto}
@@ -757,6 +805,55 @@ def _activity_svg(daily: List[Dict[str, Any]], commits: bool) -> str:
     )
 
 
+def _q_hdr(title: str, note: str) -> str:
+    """Eyebrow for a § 02 breakdown table: label, hairline rule, and what is in it."""
+    return (
+        f"<div class='qhd'><span class='t'>{title}</span><span class='r'></span>"
+        f"<span class='n'>{escape(note)}</span></div>"
+    )
+
+
+def _q_head(cols: List[Tuple[str, bool]]) -> str:
+    """Header row. The flag marks a numeric column, which right-aligns with the data."""
+    return (
+        "<thead><tr>"
+        + "".join(
+            f"<th class='num'>{c}</th>" if n else f"<th>{c}</th>" for c, n in cols
+        )
+        + "</tr></thead>"
+    )
+
+
+def _q_grade(score: Any, grade: str) -> str:
+    """Score chip, fixed width so the column reads as one ruler rather than ragged text."""
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        s = 0.0
+    cls = "hi" if s >= 80 else ("mid" if s >= 60 else "lo")
+    return f"<td><span class='gr {cls}'>{score} ({grade})</span></td>"
+
+
+def _q_meter(val: Any, good: float, ok: float) -> str:
+    """A rate cell: the figure over a hairline bar, so rows rank without parsing digits."""
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        v = 0.0
+    cls = "" if v >= good else (" mid" if v >= ok else " lo")
+    return (
+        f"<td class='num'><span class='mt{cls}'>{val}%"
+        f"<i><b style='width:{max(0.0, min(100.0, v)):.4g}%'></b></i></span></td>"
+    )
+
+
+def _q_num(val: Any, unit: str = "") -> str:
+    """A plain figure. Zero is dimmed — absence should not compete with signal."""
+    z = " z" if str(val) in ("0", "0.0", "0.00", "0.0x") else ""
+    u = f"<span class='u'>{unit}</span>" if unit else ""
+    return f"<td class='num{z}'>{val}{u}</td>"
+
+
 def _quality(qm: Optional[Dict[str, Any]]) -> str:
     """§ 02 — Code quality, verification hygiene, and agent execution reliability."""
     if not qm or not qm.get("available"):
@@ -890,201 +987,138 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"</div>"
         )
 
-    breakdown_rows = []
-    # Agent breakdown rows
+    # Engines and models share one ruler of columns, but they are different populations —
+    # an engine row aggregates every model it drove. Group rows keep that readable.
+    engine_rows: List[str] = []
     by_agent = qm.get("by_agent") or {}
     for ak, a_info in by_agent.items():
-        a_score = a_info.get("quality_score", 100)
-        a_grade = a_info.get("grade", "A")
-        a_comp = a_info.get("task_completion_rate_pct", 100.0)
-        a_turns = a_info.get("turns_per_completion_avg", 1.0)
-        a_time = a_info.get("duration_minutes_per_completion_avg", 0.0)
-        a_v_rate = a_info.get("verification_rate_pct", 100.0)
-        a_fsr = a_info.get("first_pass_success_rate_pct", 100.0)
-        a_fixes = a_info.get("followup_code_fixes_count", 0)
-        a_comm = a_info.get("comment_to_code_ratio", 0.0)
-        a_verb = a_info.get("verbosity_tokens_per_turn", 0.0)
-        a_sess = a_info.get("sessions", 0)
-        badge_style = (
-            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
-            if ak == "antigravity"
-            else (
-                "color:var(--blue);border-color:#1e355b;background:#0d1c33"
-                if ak == "claude"
-                else "color:var(--purple, #c084fc);border-color:#3b1e5b;background:#1a0d33"
-            )
-        )
-        score_badge = (
-            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
-            if a_score >= 80
-            else (
-                "color:var(--gold);border-color:#3d3014;background:#241D0E"
-                if a_score >= 60
-                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
-            )
-        )
-        breakdown_rows.append(
-            f"<tr style='border-bottom:1px solid var(--line);'>"
-            f"<td style='padding:10px 14px;'><span class='pill' style='{badge_style};font-size:13px;padding:3px 10px;font-weight:600;'>{escape(a_info.get('label', ak))}</span></td>"
-            f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{a_score} ({a_grade})</span></td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_comp}%</b></td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_turns}</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_time}m</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_v_rate}%</b></td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;'><b style='color:var(--ink);'>{a_fsr}%</b></td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_fixes}</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_comm}x</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{a_verb} tok</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{a_sess}</td>"
-            f"</tr>"
+        eng_cls = {"antigravity": "anti", "claude": "claude"}.get(ak, "codex")
+        engine_rows.append(
+            "<tr>"
+            f"<td><span class='eng {eng_cls}'>{escape(str(a_info.get('label', ak)))}</span></td>"
+            + _q_grade(a_info.get("quality_score", 100), a_info.get("grade", "A"))
+            + _q_meter(a_info.get("task_completion_rate_pct", 100.0), 80.0, 60.0)
+            + _q_num(a_info.get("turns_per_completion_avg", 1.0))
+            + _q_num(a_info.get("duration_minutes_per_completion_avg", 0.0), "m")
+            + _q_meter(a_info.get("verification_rate_pct", 100.0), 75.0, 50.0)
+            + _q_meter(a_info.get("first_pass_success_rate_pct", 100.0), 85.0, 70.0)
+            + _q_num(a_info.get("followup_code_fixes_count", 0))
+            + _q_num(a_info.get("comment_to_code_ratio", 0.0), "x")
+            + _q_num(a_info.get("verbosity_tokens_per_turn", 0.0), " tok")
+            + _q_num(a_info.get("sessions", 0))
+            + "</tr>"
         )
 
-    # Model breakdown rows
-    by_model = qm.get("by_model") or []
-    for m_info in by_model:
-        m_name = m_info.get("model", "unknown")
-        m_score = m_info.get("quality_score", 100)
-        m_grade = m_info.get("grade", "A")
-        m_comp = m_info.get("task_completion_rate_pct", 100.0)
-        m_turns = m_info.get("turns_per_completion_avg", 1.0)
-        m_time = m_info.get("duration_minutes_per_completion_avg", 0.0)
-        m_v_rate = m_info.get("verification_rate_pct", 100.0)
-        m_fsr = m_info.get("first_pass_success_rate_pct", 100.0)
-        m_fixes = m_info.get("followup_code_fixes_count", 0)
-        m_comm = m_info.get("comment_to_code_ratio", 0.0)
-        m_verb = m_info.get("verbosity_tokens_per_turn", 0.0)
-        m_sess = m_info.get("sessions", 0)
-        score_badge = (
-            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
-            if m_score >= 80
-            else (
-                "color:var(--gold);border-color:#3d3014;background:#241D0E"
-                if m_score >= 60
-                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
-            )
-        )
-        breakdown_rows.append(
-            f"<tr style='border-bottom:1px solid var(--line);'>"
-            f"<td class='m' style='padding:10px 14px;'><code style='color:var(--ink);font-size:14px;font-weight:500;'>{escape(m_name)}</code></td>"
-            f"<td style='padding:10px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{m_score} ({m_grade})</span></td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_comp}%</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_turns}</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_time}m</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_v_rate}%</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:15px;color:var(--ink);'>{m_fsr}%</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_fixes}</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_comm}x</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink);'>{m_verb} tok</td>"
-            f"<td class='num' style='padding:10px 14px;font-size:14px;color:var(--ink-3);'>{m_sess}</td>"
-            f"</tr>"
+    model_rows: List[str] = []
+    for m_info in qm.get("by_model") or []:
+        model_rows.append(
+            "<tr>"
+            f"<td><code class='nm'>{escape(str(m_info.get('model', 'unknown')))}</code></td>"
+            + _q_grade(m_info.get("quality_score", 100), m_info.get("grade", "A"))
+            + _q_meter(m_info.get("task_completion_rate_pct", 100.0), 80.0, 60.0)
+            + _q_num(m_info.get("turns_per_completion_avg", 1.0))
+            + _q_num(m_info.get("duration_minutes_per_completion_avg", 0.0), "m")
+            + _q_meter(m_info.get("verification_rate_pct", 100.0), 75.0, 50.0)
+            + _q_meter(m_info.get("first_pass_success_rate_pct", 100.0), 85.0, 70.0)
+            + _q_num(m_info.get("followup_code_fixes_count", 0))
+            + _q_num(m_info.get("comment_to_code_ratio", 0.0), "x")
+            + _q_num(m_info.get("verbosity_tokens_per_turn", 0.0), " tok")
+            + _q_num(m_info.get("sessions", 0))
+            + "</tr>"
         )
 
     matrix_table = ""
-    if breakdown_rows:
+    if engine_rows or model_rows:
+        body = ""
+        if engine_rows:
+            body += (
+                "<tr class='grp'><td colspan='11'>Agent engines</td></tr>"
+                + "".join(engine_rows)
+            )
+        if model_rows:
+            body += (
+                "<tr class='grp'><td colspan='11'>Underlying models</td></tr>"
+                + "".join(model_rows)
+            )
+        note = (
+            f"{len(engine_rows)} engine{'' if len(engine_rows) == 1 else 's'} · "
+            f"{len(model_rows)} model{'' if len(model_rows) == 1 else 's'}"
+        )
         matrix_table = (
-            f"<div style='margin-top:20px;'>"
-            f"<div style='font-size:14px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:10px;display:flex;align-items:center;gap:8px;'>"
-            f"<span>ENGINE &amp; MODEL RELIABILITY COMPARISON</span>"
-            f"</div>"
-            f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>"
-            f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
-            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>ENGINE / MODEL</th>"
-            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TURNS/TASK</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TIME/TASK</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FOLLOW-UP FIXES</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMMENT RATIO</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERBOSITY</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
-            f"</tr></thead>"
-            f"<tbody>{''.join(breakdown_rows)}</tbody>"
-            f"</table>"
-            f"</div>"
+            _q_hdr("Engine &amp; model reliability", note)
+            + "<div class='qwrap'><table class='qt'>"
+            + _q_head(
+                [
+                    ("Engine / model", False),
+                    ("Score", False),
+                    ("Completion", True),
+                    ("Turns/task", True),
+                    ("Time/task", True),
+                    ("Verification", True),
+                    ("First-pass", True),
+                    ("Follow-up fixes", True),
+                    ("Comment ratio", True),
+                    ("Verbosity", True),
+                    ("Sessions", True),
+                ]
+            )
+            + f"<tbody>{body}</tbody></table></div>"
+        )
+
+    # Domains are declared in a fixed taxonomy order upstream; busiest first is what a
+    # reader wants, since a domain with no sessions carries no signal at all.
+    by_category = qm.get("by_category") or {}
+    category_rows = []
+    ranked = sorted(
+        (c for c in by_category.values() if c.get("sessions", 0)),
+        key=lambda c: -c.get("sessions", 0),
+    )
+    for c_info in ranked:
+        category_rows.append(
+            "<tr>"
+            f"<td><div class='nm row'><span>{c_info.get('icon', '💻')}</span>"
+            f"<span>{escape(str(c_info.get('label', 'Other')))}</span>"
+            f"<span class='shr'>{c_info.get('share_pct', 0.0)}%</span></div>"
+            f"<div class='sub'>{escape(str(c_info.get('desc', '')))}</div></td>"
+            + _q_grade(c_info.get("quality_score", 100), c_info.get("grade", "A"))
+            + _q_meter(c_info.get("task_completion_rate_pct", 100.0), 80.0, 60.0)
+            + _q_num(c_info.get("turns_per_completion_avg", 1.0))
+            + _q_num(c_info.get("duration_minutes_per_completion_avg", 0.0), "m")
+            + _q_meter(c_info.get("verification_rate_pct", 100.0), 75.0, 50.0)
+            + _q_meter(c_info.get("first_pass_success_rate_pct", 100.0), 85.0, 70.0)
+            + _q_num(c_info.get("followup_code_fixes_count", 0))
+            + _q_num(c_info.get("comment_to_code_ratio", 0.0), "x")
+            + _q_num(c_info.get("sessions", 0))
+            + f"<td><div class='nm'>{escape(str(c_info.get('best_agent', '—')))}</div>"
+            f"<div class='sub'>{escape(str(c_info.get('best_model', '—')))}</div></td>"
+            "</tr>"
         )
 
     category_table = ""
-    by_category = qm.get("by_category") or {}
-    category_rows = []
-    for ck, c_info in by_category.items():
-        c_sessions = c_info.get("sessions", 0)
-        if c_sessions == 0:
-            continue
-        c_label = c_info.get("label", ck.capitalize())
-        c_icon = c_info.get("icon", "💻")
-        c_desc = c_info.get("desc", "")
-        c_score = c_info.get("quality_score", 100)
-        c_grade = c_info.get("grade", "A")
-        c_comp = c_info.get("task_completion_rate_pct", 100.0)
-        c_turns = c_info.get("turns_per_completion_avg", 1.0)
-        c_time = c_info.get("duration_minutes_per_completion_avg", 0.0)
-        c_verif = c_info.get("verification_rate_pct", 100.0)
-        c_fsr = c_info.get("first_pass_success_rate_pct", 100.0)
-        c_fixes = c_info.get("followup_code_fixes_count", 0)
-        c_comm = c_info.get("comment_to_code_ratio", 0.0)
-        c_share = c_info.get("share_pct", 0.0)
-        best_agent = c_info.get("best_agent", "—")
-        best_model = c_info.get("best_model", "—")
-
-        score_badge = (
-            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
-            if c_score >= 80
-            else (
-                "color:var(--gold);border-color:#3d3014;background:#241D0E"
-                if c_score >= 60
-                else "color:var(--crit);border-color:#4a1e17;background:#2a110e"
-            )
-        )
-        category_rows.append(
-            f"<tr style='border-bottom:1px solid var(--line);'>"
-            f"<td style='padding:12px 14px;'>"
-            f"<div style='display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink);'>"
-            f"<span>{c_icon}</span><span>{escape(c_label)}</span>"
-            f"<span style='font-size:11px;color:var(--ink-3);font-weight:400;'>({c_share}%)</span>"
-            f"</div>"
-            f"<div style='font-size:12px;color:var(--ink-3);margin-top:2px;'>{escape(c_desc)}</div>"
-            f"</td>"
-            f"<td style='padding:12px 14px;'><span class='pill' style='{score_badge};font-size:13px;padding:3px 10px;font-weight:700;'>{c_score} ({c_grade})</span></td>"
-            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_comp}%</b></td>"
-            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_turns}</td>"
-            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_time}m</td>"
-            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_verif}%</b></td>"
-            f"<td class='num' style='padding:12px 14px;font-size:15px;'><b style='color:var(--ink);'>{c_fsr}%</b></td>"
-            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_fixes}</td>"
-            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink);'>{c_comm}x</td>"
-            f"<td class='num' style='padding:12px 14px;font-size:14px;color:var(--ink-2);font-weight:600;'>{c_sessions}</td>"
-            f"<td style='padding:12px 14px;font-size:13px;'>"
-            f"<div><b style='color:var(--ink);'>{escape(best_agent)}</b></div>"
-            f"<div style='color:var(--ink-3);font-size:11px;'>{escape(best_model)}</div>"
-            f"</td>"
-            f"</tr>"
-        )
-
     if category_rows:
         category_table = (
-            f"<div style='margin-top:28px;'>"
-            f"<div style='font-size:14px;font-weight:700;color:var(--ink);letter-spacing:0.04em;margin-bottom:10px;display:flex;align-items:center;gap:8px;'>"
-            f"<span>CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN</span>"
-            f"</div>"
-            f"<table style='margin-top:4px;width:100%;border-collapse:collapse;'>"
-            f"<thead><tr style='border-bottom:1px solid var(--line-2);'>"
-            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TASK CATEGORY</th>"
-            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SCORE</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMPLETION</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TURNS/TASK</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>TIME/TASK</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>VERIFICATION</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FIRST-PASS SUCCESS</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>FOLLOW-UP FIXES</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>COMMENT RATIO</th>"
-            f"<th class='num' style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>SESSIONS</th>"
-            f"<th style='padding:10px 14px;font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:0.06em;text-transform:uppercase;'>BEST FIT ENGINE / MODEL</th>"
-            f"</tr></thead>"
-            f"<tbody>{''.join(category_rows)}</tbody>"
-            f"</table>"
-            f"</div>"
+            _q_hdr(
+                "Capability by coding task domain",
+                f"{len(category_rows)} active domain"
+                f"{'' if len(category_rows) == 1 else 's'} · by session volume",
+            )
+            + "<div class='qwrap'><table class='qt'>"
+            + _q_head(
+                [
+                    ("Task domain", False),
+                    ("Score", False),
+                    ("Completion", True),
+                    ("Turns/task", True),
+                    ("Time/task", True),
+                    ("Verification", True),
+                    ("First-pass", True),
+                    ("Follow-up fixes", True),
+                    ("Comment ratio", True),
+                    ("Sessions", True),
+                    ("Best fit engine / model", False),
+                ]
+            )
+            + f"<tbody>{''.join(category_rows)}</tbody></table></div>"
         )
 
     return (

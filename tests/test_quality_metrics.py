@@ -347,7 +347,8 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert "Claude Code" in html or "claude" in html
     assert "claude-sonnet-4-6" in html
     assert "gemini-3.6-flash" in html
-    assert "ENGINE / MODEL" in html
+    assert "Engine / model" in html
+    assert "Engine &amp; model reliability" in html
 
 
 def test_quality_metrics_by_task_category() -> None:
@@ -491,7 +492,7 @@ def test_quality_metrics_by_task_category() -> None:
 
     # Render dashboard
     html = render(payload)
-    assert "CAPABILITY &amp; PERFORMANCE BY CODING TASK DOMAIN" in html or "CAPABILITY & PERFORMANCE BY CODING TASK DOMAIN" in html
+    assert "Capability by coding task domain" in html
     assert "UI &amp; Frontend" in html or "UI & Frontend" in html
 
 
