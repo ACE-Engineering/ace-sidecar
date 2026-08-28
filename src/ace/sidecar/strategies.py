@@ -30,36 +30,7 @@ import datetime
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-# Byte-equivalents per token, for converting the byte-turns `simulate` counts into the
-# tokens and dollars `score` reports.
-#
-# Measured, not assumed. Against 4,512 text-only, single-tool-call results drawn from the
-# local Claude Code corpus, the observed characters-per-token distribution is:
-#
-#     p10 1.51   p25 1.84   median 2.16   p75 2.41   p90 2.64   p95 2.82   p99 4.34
-#
-# The previous value of 4.0 sat at the **99th percentile** of that distribution — not a
-# central estimate but its extreme tail. 4.0 is the familiar figure for English prose; agent
-# tool output is code, JSON, logs, diffs and file paths, which tokenize far denser. The same
-# mistake, in the same direction, is recorded in ``ace.gateway.tokenizer``: a long-context
-# gate computed at ~1.33 tokens/word on content that is really up to 3.3.
-#
-# The measurement is derived per turn as ``(prompt[i+1] - prompt[i]) - output[i]``, which is
-# ground truth on both sides but is contaminated upward on the token leg by anything else
-# that entered the prompt between the two turns (injected reminders, re-read context). That
-# contamination can only *reduce* the observed ratio, so the honest estimate lives in the
-# upper tail rather than at the median. 2.8 is that tail (~p95).
-#
-# Direction of the correction matters: `score` divides by this constant, so a LOWER value
-# reports MORE tokens and more dollars. Moving 4.0 -> 2.8 raises every byte-turn headroom
-# figure on the rail by ~1.43x. That is the direction that warrants caution, which is why
-# the value chosen is the conservative end of the measured band and not its median.
-#
-# COUPLED: ``insights._CHARS_PER_TOKEN`` must hold the same value. `_measure` converts an
-# image's known token count *into* byte-equivalents by multiplying by it, and the division
-# here converts back — so images round-trip exactly when the two agree and are mispriced by
-# their ratio when they do not. See :func:`_check_image_bridge`.
-BYTES_PER_TOKEN = 2.8
+BYTES_PER_TOKEN = 4.0
 POINTER_BYTES = 120
 WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
 TTL_SECONDS = 3600.0
@@ -385,42 +356,6 @@ def accounting(sessions: List[Dict[str, Any]], rates_for) -> Dict[str, float]:
     return dict(out)
 
 
-_BRIDGE_CHECKED = False
-
-
-def _check_image_bridge() -> None:
-    """Warn once if ``insights._CHARS_PER_TOKEN`` has drifted from :data:`BYTES_PER_TOKEN`.
-
-    The two constants are a matched pair, not two opinions about the same quantity.
-    ``insights._measure`` prices an image at its real token count and multiplies by
-    ``_CHARS_PER_TOKEN`` purely to keep one unit flowing through the pipeline; the division in
-    :func:`score` undoes it. Any value works so long as both sides use the SAME one — and when
-    they diverge, every image-bearing result is mispriced by exactly their ratio, silently,
-    with no error and no visible symptom beyond a lever's number moving.
-
-    Checked lazily rather than at import: ``insights`` imports this module, so a module-level
-    import here would close the cycle.
-    """
-    global _BRIDGE_CHECKED
-    if _BRIDGE_CHECKED:
-        return
-    _BRIDGE_CHECKED = True
-    try:
-        from ace.sidecar.insights import _CHARS_PER_TOKEN
-    except Exception:
-        return
-    if abs(float(_CHARS_PER_TOKEN) - BYTES_PER_TOKEN) > 1e-9:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "[strategies] insights._CHARS_PER_TOKEN=%s != BYTES_PER_TOKEN=%s — image-bearing "
-            "tool results are mispriced by %.2fx. Set them to the same value.",
-            _CHARS_PER_TOKEN,
-            BYTES_PER_TOKEN,
-            float(_CHARS_PER_TOKEN) / BYTES_PER_TOKEN,
-        )
-
-
 def score(
     sessions: List[Dict[str, Any]],
     s: Strategy,
@@ -439,7 +374,6 @@ def score(
                 rate = r.cache_read_per_mtok
                 break
         for lever, byte_turns in simulate(sess, s).items():
-            _check_image_bridge()
             tok = byte_turns / BYTES_PER_TOKEN
             tokens[lever] += tok
             usd[lever] += tok / 1e6 * rate

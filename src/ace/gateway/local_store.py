@@ -23,13 +23,12 @@ fraction of what was really sent — see docs/22 §1.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("ace.gateway.local_store")
 
@@ -54,51 +53,6 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
-
--- One row per lever per proxied turn: what an installed lever, run for real against the
--- actual request body, measured. Sibling of `turns` rather than columns on it, because a
--- turn has N of these (one per enabled lever) and because every row here is a
--- COUNTERFACTUAL -- a prompt that was never sent -- while every row in `turns` is what the
--- provider actually billed. Merging the two would put a real charge and a hypothetical
--- saving in one record with nothing to tell them apart.
---
--- Why this table has to exist at all: a measured result is produced once, in a background
--- task, moments after a response is served. Without a row here it is logged and lost, and
--- the dashboard is back to simulating headroom over transcripts.
-CREATE TABLE IF NOT EXISTS lever_turns (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts                    REAL    NOT NULL,
-    request_id            TEXT,
-    session_id            TEXT,
-    lever                 TEXT    NOT NULL,
-    mode                  TEXT,
-    model                 TEXT,
-    -- Both sides of the counterfactual, kept so the delta can be re-derived rather than
-    -- trusted. Counted the same way through the provider's own counter; only their
-    -- difference is exact.
-    baseline_tokens       INTEGER DEFAULT 0,
-    counterfactual_tokens INTEGER DEFAULT 0,
-    removed_tokens        INTEGER DEFAULT 0,
-    -- How the removed tokens were allocated against this turn's real usage buckets. Kept
-    -- because it is the entire pricing argument: the same token delta is worth ~12x more
-    -- coming out of a cache write than out of a cache read.
-    from_cache_write      INTEGER DEFAULT 0,
-    from_input            INTEGER DEFAULT 0,
-    from_cache_read       INTEGER DEFAULT 0,
-    usd                   REAL    DEFAULT 0.0,
-    -- 0 means the model had no catalog entry: tokens are real, dollars are absent. Must
-    -- never render as $0.00 of saving -- a silent zero looks like a measured result.
-    priced                INTEGER DEFAULT 1,
-    -- 0 where an edit touched already-cached history, whose cache-write penalty lands on
-    -- the NEXT turn and is therefore not netted into `usd`.
-    prefix_safe           INTEGER DEFAULT 1,
-    edits_applied         INTEGER DEFAULT 0,
-    -- Lever-authored counters, numeric values only -- see LocalStore._numeric_diagnostics.
-    diagnostics           TEXT,
-    note                  TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_lever_turns_ts ON lever_turns(ts);
-CREATE INDEX IF NOT EXISTS idx_lever_turns_lever ON lever_turns(lever);
 """
 
 
@@ -152,132 +106,7 @@ class LocalStore:
         except Exception:  # pragma: no cover - defensive
             log.debug("[local_store] failed to record a turn", exc_info=True)
 
-    @staticmethod
-    def _numeric_diagnostics(diagnostics: Any) -> Optional[str]:
-        """A lever's diagnostics, numbers only, as JSON — or ``None``.
-
-        This store's one invariant is that it holds numbers and never text from a developer's
-        session. Diagnostics are authored by a third-party lever package, so they are the one
-        field here that could carry arbitrary strings — a lever logging the command it
-        matched would quietly put a shell line into the database. Numeric values survive,
-        everything else is dropped, and the invariant stays a property of the code rather
-        than a promise about third-party behaviour.
-        """
-        if not isinstance(diagnostics, Mapping):
-            return None
-        clean = {
-            str(k): v
-            for k, v in diagnostics.items()
-            if isinstance(v, (int, float)) and not isinstance(v, bool)
-        }
-        return json.dumps(clean, sort_keys=True) if clean else None
-
-    def record_lever_turns(self, rows: Iterable[Any]) -> int:
-        """Persist measured lever results for one turn. Never raises.
-
-        Takes the whole batch for a turn in one transaction: the rows describe a single
-        request, and half of them landing would leave the rail ranking levers against
-        different denominators.
-        """
-        prepared = []
-        for m in rows or ():
-            try:
-                edits = getattr(m, "edits", ()) or ()
-                prepared.append((
-                    getattr(m, "ts", None) or time.time(),
-                    getattr(m, "request_id", ""),
-                    getattr(m, "session_id", None),
-                    getattr(m, "lever", ""),
-                    getattr(m, "mode", ""),
-                    getattr(m, "model", ""),
-                    int(getattr(m, "baseline_tokens", 0)),
-                    int(getattr(m, "counterfactual_tokens", 0)),
-                    int(getattr(m, "removed_tokens", 0)),
-                    int(getattr(m, "from_cache_write", 0)),
-                    int(getattr(m, "from_input", 0)),
-                    int(getattr(m, "from_cache_read", 0)),
-                    float(getattr(m, "usd", 0.0)),
-                    1 if getattr(m, "priced", True) else 0,
-                    0 if any(e.applied and not e.prefix_safe for e in edits) else 1,
-                    sum(1 for e in edits if e.applied),
-                    self._numeric_diagnostics(getattr(m, "diagnostics", None)),
-                    getattr(m, "note", ""),
-                ))
-            except Exception:
-                log.debug("[local_store] skipped a malformed lever row", exc_info=True)
-        if not prepared:
-            return 0
-        try:
-            with self._lock:
-                self._db.executemany(
-                    "INSERT INTO lever_turns (ts, request_id, session_id, lever, mode, model,"
-                    " baseline_tokens, counterfactual_tokens, removed_tokens,"
-                    " from_cache_write, from_input, from_cache_read, usd, priced,"
-                    " prefix_safe, edits_applied, diagnostics, note)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    prepared,
-                )
-                self._db.commit()
-            return len(prepared)
-        except Exception:  # pragma: no cover - defensive
-            log.debug("[local_store] failed to record lever turns", exc_info=True)
-            return 0
-
     # -- read --------------------------------------------------------------------------
-
-    def lever_summary(self, since: Optional[float] = None) -> Dict[str, Any]:
-        """Measured lever results, aggregated per lever. What the rail's live half renders.
-
-        Aggregated **per lever and never totalled**, the same discipline
-        ``levers.ledger.LedgerReport`` documents: two levers can claim the same bytes, so
-        adding their savings produces a number larger than anything they could jointly
-        deliver. Ranking answers the question actually being asked.
-
-        Only ``priced`` rows contribute dollars. Unpriced rows still contribute their token
-        counts and are surfaced separately — a model with no catalog entry saved real tokens,
-        and rendering that as $0.00 would read as "this lever does nothing".
-        """
-        where, args = ("WHERE ts >= ?", (since,)) if since else ("", ())
-        with self._lock:
-            cur = self._db.execute(
-                f"""SELECT lever,
-                           COUNT(*)                                        AS turns,
-                           COALESCE(SUM(removed_tokens), 0)                AS removed_tokens,
-                           COALESCE(SUM(CASE WHEN priced=1 THEN usd END), 0.0) AS usd,
-                           COALESCE(SUM(from_cache_write), 0)              AS from_cache_write,
-                           COALESCE(SUM(from_input), 0)                    AS from_input,
-                           COALESCE(SUM(from_cache_read), 0)               AS from_cache_read,
-                           SUM(CASE WHEN priced=0 THEN 1 ELSE 0 END)       AS unpriced_turns,
-                           SUM(CASE WHEN prefix_safe=0 THEN 1 ELSE 0 END)  AS unsafe_turns,
-                           COALESCE(SUM(edits_applied), 0)                 AS edits_applied,
-                           MAX(ts)                                         AS last_ts
-                    FROM lever_turns {where}
-                    GROUP BY lever
-                    ORDER BY usd DESC""",
-                args,
-            )
-            cols = [c[0] for c in cur.description]
-            by_lever = [dict(zip(cols, r)) for r in cur.fetchall()]
-            cur = self._db.execute(
-                f"SELECT COUNT(*), COUNT(DISTINCT request_id) FROM lever_turns {where}", args
-            )
-            n_rows, n_turns = cur.fetchone()
-        return {
-            "by_lever": by_lever,
-            "rows": n_rows,
-            "turns_observed": n_turns,
-            # Deliberately absent: a `total_usd`. See the docstring.
-        }
-
-    def recent_lever_turns(self, limit: int = 50) -> List[Dict[str, Any]]:
-        with self._lock:
-            cur = self._db.execute(
-                "SELECT ts, lever, mode, model, removed_tokens, usd, priced, prefix_safe,"
-                " edits_applied, note FROM lever_turns ORDER BY ts DESC LIMIT ?",
-                (limit,),
-            )
-            cols = [c[0] for c in cur.description]
-            return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def summary(self, since: Optional[float] = None) -> Dict[str, Any]:
         """Aggregates for the dashboard."""
