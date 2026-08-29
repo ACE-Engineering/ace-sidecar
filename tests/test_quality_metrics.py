@@ -880,8 +880,8 @@ def test_quality_actions_flag_a_recurring_offender() -> None:
     assert top["kind"] == "fix"
 
 
-def test_quality_actions_flag_clones_and_scratch_worktrees() -> None:
-    """The same file in two checkouts is one problem, and a worktree is not a place to fix."""
+def test_quality_actions_flag_clones() -> None:
+    """The same file in two checkouts is one problem occupying two rows."""
     from ace.sidecar.insights import quality_actions
 
     sess = [
@@ -890,19 +890,48 @@ def test_quality_actions_flag_clones_and_scratch_worktrees() -> None:
             {
                 "/Users/x/Documents/proj/src/a/b.py": 5,
                 "/Users/x/Downloads/clone/proj/src/a/b.py": 5,
-                "/private/tmp/claude-501/abc/scratchpad/wt/src/a/c.py": 5,
             },
         )
     ]
-    acts = quality_actions(sess, quality_metrics(sess))
-    # Both items are "discount" kind, so they must be matched by content, not keyed by kind.
-    clones = next(a for a in acts if "clones" in a["title"])
-    scratch = next(a for a in acts if "scratch" in a["title"])
-
-    # The two checkouts of b.py collapse to one repo-relative file; c.py is not a clone.
+    clones = next(
+        a for a in quality_actions(sess, quality_metrics(sess)) if "clones" in a["title"]
+    )
     assert "1 file appears under 2 paths" in clones["evidence"]
     assert "src/a/b.py in 2 checkouts" in clones["evidence"]
-    assert "1 of 3 thrashed paths" in scratch["evidence"]
+
+
+def test_scratch_worktrees_are_excluded_from_convergence() -> None:
+    """A throwaway checkout is not a file in the codebase, so it never reaches the metric."""
+    from ace.sidecar.insights import _is_edit_artifact, quality_actions
+
+    for p in (
+        "/private/tmp/claude-501/abc/scratchpad/wt/src/a.py",
+        "/tmp/claude-99/x/scratchpad/b.py",
+        "/repo/.git/worktrees/feat/src/c.py",
+        "/var/folders/zz/T/d.py",
+    ):
+        assert _is_edit_artifact(p) is True, p
+    assert _is_edit_artifact("/Users/x/Documents/proj/src/a.py") is False
+
+    sess = [
+        _thrash_session(
+            "s1",
+            {
+                "/Users/x/Documents/proj/src/real.py": 5,
+                "/private/tmp/claude-501/abc/scratchpad/wt/src/throwaway.py": 9,
+            },
+        )
+    ]
+    qm = quality_metrics(sess)
+    # Only the real file is counted, listed, or acted on.
+    assert qm["files_edited"] == 1
+    assert qm["thrashed_files_distinct"] == 1
+    assert [f["path"] for f in qm["thrashed_files_list"]] == [
+        "/Users/x/Documents/proj/src/real.py"
+    ]
+    assert not any("scratch" in a["title"] for a in quality_actions(sess, qm))
+    # The session still counts as one that edited code and so ought to have verified.
+    assert qm["sessions_with_edits"] == 1
 
 
 def test_quality_actions_stay_silent_without_evidence() -> None:
@@ -923,3 +952,22 @@ def test_quality_actions_reach_the_payload_and_render() -> None:
     html = render(payload)
     assert "What to do about it" in html
     assert "hot.py" in html
+
+
+def test_in_repo_agent_worktrees_are_excluded() -> None:
+    """Claude Code worktrees live at <repo>/.claude/worktrees/, not under a temp dir."""
+    from ace.sidecar.insights import _is_edit_artifact
+
+    real = "/Users/x/proj/src/ace/gateway/proxy.py"
+    copies = [
+        "/Users/x/proj/.claude/worktrees/agent-a5beeffe/src/ace/gateway/proxy.py",
+        "/Users/x/proj/.claude/worktrees/agent-ac499c44/src/ace/gateway/proxy.py",
+    ]
+    assert _is_edit_artifact(real) is False
+    for c in copies:
+        assert _is_edit_artifact(c) is True, c
+
+    sess = [_thrash_session("s1", {p: 5 for p in [real, *copies]})]
+    qm = quality_metrics(sess)
+    assert qm["files_edited"] == 1
+    assert [f["path"] for f in qm["thrashed_files_list"]] == [real]

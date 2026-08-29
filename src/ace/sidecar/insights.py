@@ -2140,6 +2140,27 @@ _DIAGNOSTIC_RATES = ("edit_convergence_rate",)
 _EDIT_ARTIFACT_MARKERS = ("/.gemini/antigravity/brain/", "/.system_generated/")
 _EDIT_ARTIFACT_SUFFIXES = ("walkthrough.md", "implementation_plan.md")
 
+# A path under one of these is a throwaway checkout — an agent worktree or a session
+# scratchpad. The editing in it is real work, so the session still counts as an editing
+# session that ought to verify; but the directory is gone and the file is a copy of one
+# that lives elsewhere, so it is not somewhere convergence can be improved and not a row
+# worth spending on the evidence panel. Same treatment as the planning files above.
+# Agent worktrees are not all under a temp dir: Claude Code puts them at
+# <repo>/.claude/worktrees/agent-<hash>/, inside the repo they are a copy of. Missing that
+# one left three throwaway copies of a file sitting in the panel as three separate files.
+_SCRATCH_MARKERS = (
+    "/private/tmp/claude-",
+    "/tmp/claude-",
+    "/var/folders/",
+    "/scratchpad/",
+    "/.claude/worktrees/",
+    "/.git/worktrees/",
+)
+
+
+def _is_scratch_path(p: str) -> bool:
+    return any(m in p for m in _SCRATCH_MARKERS)
+
 # A file rewritten this many times inside one session did not converge.
 _THRASH_EDITS = 3
 
@@ -2148,8 +2169,11 @@ _THRASH_LIST_MAX = 10
 
 
 def _is_edit_artifact(raw_target: str) -> bool:
-    return any(m in raw_target for m in _EDIT_ARTIFACT_MARKERS) or raw_target.endswith(
-        _EDIT_ARTIFACT_SUFFIXES
+    """Not a file in the developer's codebase: agent bookkeeping, or a throwaway checkout."""
+    return (
+        any(m in raw_target for m in _EDIT_ARTIFACT_MARKERS)
+        or raw_target.endswith(_EDIT_ARTIFACT_SUFFIXES)
+        or _is_scratch_path(raw_target)
     )
 
 
@@ -2328,17 +2352,6 @@ def _eligible(group: List[Dict[str, Any]]) -> bool:
 # carries the evidence that triggered it — a recommendation a reader cannot check is just
 # an opinion with a border around it.
 
-# A path under one of these is a throwaway checkout — an agent worktree or a session
-# scratchpad — not a file in the developer's codebase. It counts as work done, but naming
-# it as a file to go fix wastes a slot on a directory that no longer exists.
-_SCRATCH_MARKERS = (
-    "/private/tmp/claude-",
-    "/scratchpad/",
-    "/.git/worktrees/",
-    "/var/folders/",
-    "/tmp/claude-",
-)
-
 # Where a repo-relative path usually starts. Two absolute paths sharing a tail from one of
 # these are the same file in two checkouts far more often than they are a coincidence.
 _REPO_RELATIVE_ROOTS = (
@@ -2356,10 +2369,6 @@ _REPO_RELATIVE_ROOTS = (
 
 # Below this a "recurring" offender is just a file someone worked on twice.
 _RECURRING_SESSIONS = 3
-
-
-def _is_scratch_path(p: str) -> bool:
-    return any(m in p for m in _SCRATCH_MARKERS)
 
 
 def _repo_relative_key(p: str) -> str:
@@ -2416,7 +2425,9 @@ def quality_actions(sess: List[Dict[str, Any]], qm: Dict[str, Any]) -> List[Dict
     if not worst:
         return actions
 
-    real = {f: v for f, v in worst.items() if not _is_scratch_path(f)}
+    # Scratch worktrees never get here — _is_edit_artifact drops them upstream, so the
+    # panel, the convergence rate and these items all work from the same real files.
+    real = worst
 
     # 1. A file that defeats agents repeatedly is a property of the file, not of one session.
     recurring = sorted(
@@ -2457,22 +2468,7 @@ def quality_actions(sess: List[Dict[str, Any]], qm: Dict[str, Any]) -> List[Dict
             )
         )
 
-    # 3. Throwaway checkouts are real work but not a place to go fix anything.
-    scratch = [f for f in worst if _is_scratch_path(f)]
-    if scratch:
-        actions.append(
-            _action(
-                "Ignore the scratch-worktree rows",
-                "Agent worktrees and session scratchpads are throwaway checkouts. The "
-                "editing they contain is real, but the directories are gone, so nothing in "
-                "them is a file to go and change.",
-                f"{len(scratch)} of {len(worst)} thrashed path"
-                f"{'' if len(worst) == 1 else 's'} sit under a scratchpad or worktree",
-                kind="discount",
-            )
-        )
-
-    # 4. Concentration says where the effort would land, if it is lopsided enough to matter.
+    # 3. Concentration says where the effort would land, if it is lopsided enough to matter.
     repos: Dict[str, int] = {}
     for f in real:
         key = _repo_relative_key(f)
@@ -2494,7 +2490,7 @@ def quality_actions(sess: List[Dict[str, Any]], qm: Dict[str, Any]) -> List[Dict
                 )
             )
 
-    # 5. The one that actually moves the score, when it is the thing going wrong.
+    # 4. The one that actually moves the score, when it is the thing going wrong.
     v_pct = qm.get("verification_rate_pct", 100.0)
     if v_pct < 75.0:
         actions.append(
