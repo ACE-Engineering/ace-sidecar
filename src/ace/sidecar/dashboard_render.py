@@ -207,6 +207,12 @@ line-height:1.7;overflow-x:auto}
 border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
 .pan .pb{padding:13px 15px}
 .pan .pb .exp{color:var(--ink-3);font-size:12.5px;margin-top:10px;line-height:1.5}
+/* A caption belonging to one block, not to the panel: says what the block is and what to
+   do with it, right where it is read. A reader should never have to hover a tooltip or
+   scroll to a footnote to learn what a list of filenames is for. */
+.cap{color:var(--ink-2);font-size:12px;line-height:1.55;margin:5px 0 0}
+.cap b{color:var(--ink);font-weight:600}
+.capw{color:#B99A55;font-size:12px;line-height:1.55;margin:6px 0 9px}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{font-family:var(--mono);text-align:left;color:var(--ink-4);font-weight:400;padding:7px 8px;
 font-size:9.5px;text-transform:uppercase;letter-spacing:.11em;border-bottom:1px solid var(--line)}
@@ -247,7 +253,17 @@ color:var(--ink-2);font-weight:500;white-space:nowrap}
 .qhd .n{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);white-space:nowrap}
 .qwrap{border:1px solid var(--line);border-radius:3px;background:var(--surface);overflow-x:auto}
 .qt{width:100%;border-collapse:collapse;font-size:12.5px}
-.qt th{padding:9px 13px;white-space:nowrap;border-bottom:1px solid var(--line-2)}
+/* The global `th` is deliberately quiet — 9.5px, weight 400, --ink-4 — which works for a
+   two column strip but not here: against --surface that is roughly 2.3:1, under the 4.5:1
+   small text needs, on the row that tells you what every number below it means. These
+   headers carry more weight than usual (three rate columns that are easy to confuse), so
+   they get size, weight and --ink-2 for ~8:1, a ground of their own, and a heavier rule
+   under them. Still uppercase mono, just legible. */
+.qt th{padding:10px 13px;white-space:nowrap;color:var(--ink-2);font-size:11px;
+font-weight:600;letter-spacing:.07em;background:var(--surface-2);
+border-bottom:2px solid var(--line-2)}
+/* The footnote marker must not compete with the label it hangs off. */
+.qt th .dag{color:var(--ink-3);font-weight:400;margin-left:2px}
 .qt td{padding:10px 13px;border-bottom:1px solid var(--line);color:var(--ink-2);
 vertical-align:middle}
 .qt td.num{color:var(--ink)}
@@ -820,15 +836,33 @@ def _q_hdr(title: str, note: str) -> str:
     )
 
 
+_Q_HEAD_TIPS = {
+    "Score": "Composite: verification 70%, tool success 30%. Convergence is not in it.",
+    "Verification": "Share of editing sessions that also ran a test or lint command.",
+    "Convergence": "Share of edited files that took fewer than 3 passes in a session. "
+    "Diagnostic — not part of the score.",
+    "Tool success": "Share of tool calls that returned without an error.",
+    "Sessions": "Sessions in scope for this row.",
+    "Turns": "Model turns in scope for this row — the sample size behind the rates.",
+}
+
+
 def _q_head(cols: List[Tuple[str, bool]]) -> str:
-    """Header row. The flag marks a numeric column, which right-aligns with the data."""
-    return (
-        "<thead><tr>"
-        + "".join(
-            f"<th class='num'>{c}</th>" if n else f"<th>{c}</th>" for c, n in cols
-        )
-        + "</tr></thead>"
-    )
+    """Header row. The flag marks a numeric column, which right-aligns with the data.
+
+    A trailing dagger marks a diagnostic column and is dimmed away from its label, so the
+    label reads as a word rather than as a word with punctuation stuck to it.
+    """
+    out = []
+    for c, n in cols:
+        label, dag = (c[:-2], True) if c.endswith(" \u2020") else (c, False)
+        tip = _Q_HEAD_TIPS.get(label, "")
+        attrs = " class='num'" if n else ""
+        if tip:
+            attrs += f" title='{escape(tip)}'"
+        mark = "<span class='dag'>\u2020</span>" if dag else ""
+        out.append(f"<th{attrs}>{escape(label)}{mark}</th>")
+    return "<thead><tr>" + "".join(out) + "</tr></thead>"
 
 
 def _q_grade(score: Any, grade: str) -> str:
@@ -1002,7 +1036,16 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid #3d3014;border-radius:4px;'>"
             f"<b style='color:var(--gold);font-size:12px;'>\u26a0\ufe0f Files the agent could not settle "
             f"({_THRASH_EDITS}+ edits in one session){escape(more)}:</b>"
+            f"<p class='capw'>Each of these is a file an agent kept rewriting without "
+            f"landing it — usually a sign it was stuck: fighting a failing test, or working "
+            f"from a prompt too vague to converge on. They are the best candidates for a "
+            f"sharper prompt, a smaller task, or a look at whether the file has grown too "
+            f"big to edit safely.</p>"
             f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{''.join(rows)}</ul>"
+            f"<p class='cap' style='margin-top:9px'>Counted once per session, so "
+            f"<b>119\u00d7</b> means one session edited that file 119 times. Diagnostic "
+            f"only \u2014 about a third of all files cross this line, so it marks where to "
+            f"look, not a score.</p>"
             f"</div>"
         )
 
@@ -1136,6 +1179,9 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         f"<div><b style='color:var(--ink);'>{qm.get('total_edits', 0)}</b> file edits</div>"
         f"<div><b style='color:var(--ink);'>{qm.get('total_tool_calls', 0)}</b> total tool executions</div>"
         f"</div>"
+        f"<p class='cap'>The denominators behind the tiles above — every rate on this page "
+        f"is two of these numbers divided, shown so a percentage is never a figure you have "
+        f"to take on trust.</p>"
         f"{thrash_html}"
         f"{matrix_table}"
         f"{category_table}"
