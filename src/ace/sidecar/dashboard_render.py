@@ -1274,6 +1274,15 @@ body.m-prod .imp .iv{color:#f0a868}
 .modebar button:hover:not(.on){color:#adbac7;background:#12161a}
 .lvh{font:9px/1.4 ui-monospace,monospace;color:#6e7681;letter-spacing:.08em;text-transform:uppercase;margin:9px 0 4px;padding-top:8px;border-top:1px solid #1c2126}
 .modenote{font:10px/1.5 ui-monospace,monospace;color:#6e7681;margin-top:5px}
+/* The counterfactual, on the figure itself: what the tile reads now, struck, above what
+   the enabled skill would have made it read. The badge beneath still carries the delta and
+   the attribution -- the struck pair says how big, the badge says why and by whom. */
+.st .v .was{display:block;font-size:.56em;font-weight:600;line-height:1.3;
+  color:var(--ink-4);text-decoration:line-through;text-decoration-thickness:1px;
+  text-decoration-color:rgba(255,255,255,0.34)}
+.st .v .now{display:block;color:var(--mint)}
+.st .v .now .pc{font-family:var(--mono);font-size:.46em;font-weight:600;letter-spacing:.01em;
+  margin-left:.5em;color:var(--mint);opacity:.72}
 """
 
 
@@ -1314,7 +1323,7 @@ def _mode_js() -> str:
     control. Building the character removes the class of bug rather than the instance.
     """
     return """<script>
-(function(){
+function initModeUI(){
   var el=document.getElementById('ace-impact'); if(!el) return;
   var D={}; try{ D=JSON.parse(el.textContent)||{}; }catch(e){ return; }
   var NL=String.fromCharCode(10);
@@ -1355,23 +1364,43 @@ def _mode_js() -> str:
     var n=document.getElementById('modenote'); if(n) n.textContent=notes[mode]||'';
     document.querySelectorAll('.imp').forEach(function(slot){
       var m=M[slot.dataset.metric];
-      if(!m||mode==='off'){ slot.className='imp'; slot.innerHTML=''; return; }
+      // The figure the tile is showing. It is captured the first time this tile is touched
+      // and restored verbatim whenever there is nothing to project, so switching back to
+      // OFF cannot leave a rewritten number behind -- and a tile swapped in by the scope
+      // switcher arrives with no capture, which is exactly what makes it re-capture the
+      // new range's figure rather than the old one.
+      var tile=slot.closest('.st'), v=tile?tile.querySelector('.v'):null;
+      if(v&&v.dataset.aceOrig===undefined) v.dataset.aceOrig=v.innerHTML;
+      var restore=function(){ if(v&&v.dataset.aceOrig!==undefined) v.innerHTML=v.dataset.aceOrig; };
+      if(!m||mode==='off'){ slot.className='imp'; slot.innerHTML=''; restore(); return; }
       // A metric no enabled skill can move is stated, not left blank. A blank slot and
       // "this cannot change" look identical to a reader and are different claims.
       if(m.kind==='none'){
-        slot.className='imp on flat';
+        slot.className='imp on flat'; restore();
         slot.title='No enabled skill changes this figure: '+(m.why||'')+'.'+NL+NL+why;
         slot.innerHTML="<span class='ik'>NO CHANGE</span><span class='iv'>"+
           (m.why||'unaffected')+"</span>";
         return;
       }
-      if(!m.delta){ slot.className='imp'; slot.innerHTML=''; return; }
+      if(!m.delta){ slot.className='imp'; slot.innerHTML=''; restore(); return; }
       var pct=m.base? (m.delta/m.base*100):0;
       var shown=(m.kind==='usd')? usd(m.delta)
                : (compact(m.delta)+' tok');
       slot.className='imp on'; slot.title=why;
       slot.innerHTML="<span class='ik'>"+(mode==='prod'?'WOULD APPLY':'SHADOW')+"</span>"+
         "<span class='iv'>"+shown+"  ("+pct.toFixed(1)+"%)  via "+(m.by||'')+"</span>";
+      // Both figures come pre-formatted from the server so the struck one is character-for
+      // -character the number the tile rendered, and textContent rather than innerHTML
+      // because nothing in a payload needs to be able to write markup into the page.
+      if(v&&m.was&&m.proj){
+        var a=document.createElement('span'); a.className='was'; a.textContent=m.was;
+        var c=document.createElement('span'); c.className='now'; c.textContent=m.proj;
+        // The percentage rides on the figure because the two struck numbers alone do not
+        // say how big the move is until the reader does the division themselves.
+        var q=document.createElement('span'); q.className='pc';
+        q.textContent='('+pct.toFixed(1)+'%)'; c.appendChild(q);
+        v.innerHTML=''; v.appendChild(a); v.appendChild(c);
+      } else restore();
     });
   }
   // Persisted, because the page reloads itself every REFRESH_SECONDS. Without this the
@@ -1383,9 +1412,10 @@ def _mode_js() -> str:
   function save(m){ try{ localStorage.setItem(KEY,m); }catch(e){} }
   function load(){ try{ return localStorage.getItem(KEY)||'off'; }catch(e){ return 'off'; } }
   document.querySelectorAll('#modebar button').forEach(function(b){
-    b.addEventListener('click',function(){ save(b.dataset.mode); apply(b.dataset.mode); });});
+    b.onclick=function(){ save(b.dataset.mode); apply(b.dataset.mode); };});
   apply(load());
-})();
+}
+initModeUI();
 </script>"""
 
 
@@ -1426,7 +1456,8 @@ def _mode_impact(d: Dict[str, Any]) -> Dict[str, Any]:
     tokens = fleet.get("tokens") or {}
     prompt = float(tokens.get("prompt") or 0.0)
     output = float(tokens.get("output") or 0.0)
-    commits = float((fleet.get("commits") or {}).get("total") or 0.0)
+    cm = fleet.get("commits") or {}
+    cps = fleet.get("cost_per_session") or {}
 
     # -- the sources, ranked -------------------------------------------------------------
     volume: List[Dict[str, Any]] = []
@@ -1457,28 +1488,60 @@ def _mode_impact(d: Dict[str, Any]) -> Dict[str, Any]:
     best_tok = max((v["tokens"] for v in volume), default=0.0)
     top = volume[0]["lever"] if volume else ""
 
-    def usd_metric(base: float, divisor: float = 1.0) -> Dict[str, Any]:
-        d_ = -(best_usd / divisor) if divisor else 0.0
-        return {"kind": "usd", "delta": d_, "base": (base if divisor == 1.0 else base),
-                "by": top}
+    # -- the counterfactual, expressed as a fraction --------------------------------------
+    # Every per-something figure below is the same lever seen through a different
+    # denominator, so the one quantity they share is the fraction of spend (or of prompt
+    # tokens) the lever removes. Applying that fraction to each tile's own displayed base
+    # is what keeps the struck-through figure identical to the figure the tile is showing.
+    # Dividing the fleet total by a count does not: the commit tiles average over
+    # *committing* sessions only, so ``billed / commits`` is a number that appears nowhere
+    # on the page, and striking a tile through to replace it with a projection of some
+    # other base is worse than showing no projection at all.
+    usd_frac = (best_usd / billed) if billed else 0.0
+    tok_frac = (best_tok / prompt) if prompt else 0.0
+
+    def usd_pair(base: float, proj: float) -> Tuple[str, str]:
+        """Both figures at the coarsest precision that still tells them apart.
+
+        ``$0.06`` struck through and replaced by ``$0.06`` reads as a broken control rather
+        than as a small saving, so a collision at the tile's own precision escalates until
+        the two differ.
+        """
+        was = now = ""
+        for dp in (2, 4, 6):
+            was, now = f"${base:,.{dp}f}", f"${proj:,.{dp}f}"
+            if was != now:
+                break
+        return was, now
 
     m: Dict[str, Any] = {}
+
+    def money(key: str, base: Any) -> None:
+        b_ = float(base or 0.0)
+        if not (b_ and usd_frac):
+            return
+        delta = -b_ * usd_frac
+        was, now = usd_pair(b_, b_ + delta)
+        m[key] = {"kind": "usd", "delta": delta, "base": b_, "by": top,
+                  "was": was, "proj": now}
+
+    def toks(key: str, base: Any) -> None:
+        b_ = float(base or 0.0)
+        if not (b_ and tok_frac):
+            return
+        delta = -b_ * tok_frac
+        m[key] = {"kind": "tok", "delta": delta, "base": b_, "by": top,
+                  "was": _f(b_), "proj": _f(b_ + delta)}
+
     if volume:
         # -- money ------------------------------------------------------------------------
-        m["list_price_cost"] = {"kind": "usd", "delta": -best_usd, "base": billed, "by": top}
-        if turns:
-            m["cost_per_turn [3]"] = {"kind": "usd", "delta": -(best_usd / turns),
-                                      "base": billed / turns, "by": top}
-        if sessions:
-            m["cost_per_session [6]"] = {"kind": "usd", "delta": -(best_usd / sessions),
-                                         "base": billed / sessions, "by": top}
-        if commits:
-            m["cost_per_commit [10]"] = {"kind": "usd", "delta": -(best_usd / commits),
-                                         "base": billed / commits, "by": top}
-            m["tokens_per_commit [10]"] = {"kind": "tok", "delta": -(best_tok / commits),
-                                           "base": prompt / commits, "by": top}
+        money("list_price_cost", billed)
+        money("cost_per_turn [3]", fleet.get("cost_per_handback"))
+        money("cost_per_session [6]", cps.get("mean"))
+        money("cost_per_commit [10]", cm.get("cost_per_commit"))
         # -- volume -----------------------------------------------------------------------
-        m["tokens_in [1]"] = {"kind": "tok", "delta": -best_tok, "base": prompt, "by": top}
+        toks("tokens_in [1]", prompt)
+        toks("tokens_per_commit [10]", cm.get("tokens_per_commit"))
 
     # -- and the ones nothing moves, said out loud ----------------------------------------
     m["tokens_out [1]"] = {
@@ -3585,6 +3648,17 @@ function initMetricsUI() {
   }
 }
 
+// The rail is outside .main, so the scope switcher's swap left it untouched -- and the
+// rail is where the counterfactual payload (#ace-impact) and the lever headroom rows live,
+// both of them scored over the SELECTED range. That is why every shadow figure on the page
+// froze at whatever range the document first loaded with. Swapping it alongside .main, then
+// re-running initModeUI over the new payload, is what makes 7d and 14d mean anything.
+function swapRail(doc) {
+  const newRail = doc.querySelector('.rail');
+  const railEl = document.querySelector('.rail');
+  if (newRail && railEl) railEl.innerHTML = newRail.innerHTML;
+}
+
 function initScopeNav() {
   document.querySelectorAll('.scope a').forEach(a => {
     a.onclick = async function(e) {
@@ -3602,6 +3676,7 @@ function initScopeNav() {
           if (newMain && mainEl) {
             mainEl.innerHTML = newMain.innerHTML;
             mainEl.style.opacity = '1';
+            swapRail(doc);
             // Preserve the fragment: the scope switcher changes WHICH data is shown,
             // never WHICH section the reader is in. Dropping it here scrolled them
             // back to Overview on every agent change.
@@ -3611,6 +3686,7 @@ function initScopeNav() {
             syncRailMarker();
             initRailSpy();
             initMetricsUI();
+            if (typeof initModeUI === 'function') initModeUI();
             return;
           }
         }
@@ -3632,11 +3708,13 @@ window.addEventListener('popstate', async () => {
       const mainEl = document.querySelector('.main');
       if (newMain && mainEl) {
         mainEl.innerHTML = newMain.innerHTML;
+        swapRail(doc);
         initScopeNav();
         initMetricsUI();
         initRailNav();
         syncRailMarker();
         initRailSpy();
+        if (typeof initModeUI === 'function') initModeUI();
       }
     }
   } catch (e) {
