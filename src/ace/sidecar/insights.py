@@ -2097,8 +2097,7 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 # ------------------------------------------------- code quality & reliability metrics
 
-# Three signals survive the audit, because only three of them are both derivable from a
-# transcript and actually about *code* quality:
+# Three signals are derivable from a transcript and actually about *code* quality:
 #
 #   verification   did the agent check its own work (tests/lint) after editing?
 #   convergence    did an edit land, or did the same file get rewritten over and over?
@@ -2109,12 +2108,31 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 # (task completion required verification, so it double-counted it), or could not be
 # computed correctly from a session record at all (wall-clock per "task" is session span
 # including idle; per-model it was the *whole* session's span attributed to one model).
-
+#
+# Only two of the three are *scored*, though, and that is a deliberate demotion rather than
+# an oversight. Measured across the models in a real 30-day scope:
+#
+#   verification   56.9 points of spread (38.1% to 95.0%)
+#   convergence     8.5 points          (66.0% to 74.5%)
+#   tool success    9.8 points          (89.9% to 99.7%)
+#
+# Convergence held 35% of the composite while varying by 8.5 points, so it applied a near
+# constant drag to every score instead of separating anything. It is arguably inverted too:
+# the worst model in that scope had the *best* convergence, because a model that barely
+# edits has little to fail to converge on. Thrashing remains real and worth surfacing — a
+# file rewritten 119 times in one session is a genuine finding — but it is diagnostic, not
+# a grade. It keeps its tile, its column and its evidence panel, and stays out of the score.
+#
+# The threshold behind it also argues against scoring it: 3+ edits in one session is the
+# 76th percentile of the edit distribution, so it fires on roughly a third of all files.
+# That is a description of normal work, not an exception worth grading.
 _QUALITY_WEIGHTS = (
-    ("verification_rate", 0.45),
-    ("edit_convergence_rate", 0.35),
-    ("tool_success_rate", 0.20),
+    ("verification_rate", 0.70),
+    ("tool_success_rate", 0.30),
 )
+
+# Computed and shown, never scored. See the note above.
+_DIAGNOSTIC_RATES = ("edit_convergence_rate",)
 
 # Antigravity writes its own planning scratch files through the same edit tools it uses on
 # the workspace. Those are agent bookkeeping, not code, and counting them makes every
@@ -2254,6 +2272,7 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "edit_convergence_rate": edit_convergence_rate,
         "tool_success_rate": tool_success_rate,
     }
+    assert not set(_DIAGNOSTIC_RATES) & {k for k, _ in _QUALITY_WEIGHTS}
     raw_score = sum(rates[k] * w for k, w in _QUALITY_WEIGHTS) * 100.0
     quality_score = max(0, min(100, int(round(raw_score)))) if scored else None
 
@@ -3390,7 +3409,7 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     by_agent = qm.get("by_agent") or {}
     by_model = qm.get("by_model") or []
 
-    lines.append("# HELP ace_quality_score Composite code quality score (0-100): 45% verification, 35% edit convergence, 20% tool success.")
+    lines.append("# HELP ace_quality_score Composite code quality score (0-100): 70% verification, 30% tool success.")
     lines.append("# TYPE ace_quality_score gauge")
     if qm.get("quality_score") is not None:
         lines.append(f'ace_quality_score{{agent="all"}} {qm["quality_score"]}')
@@ -3407,7 +3426,7 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     for agent_id, q_info in by_agent.items():
         lines.append(f'ace_quality_verification_rate{{agent="{agent_id}"}} {q_info.get("verification_rate", 1.0)}')
 
-    lines.append("# HELP ace_quality_edit_convergence_rate Share of files edited in a session that did not need 3 or more passes.")
+    lines.append("# HELP ace_quality_edit_convergence_rate Diagnostic, not part of ace_quality_score. Share of files edited in a session that did not need 3 or more passes.")
     lines.append("# TYPE ace_quality_edit_convergence_rate gauge")
     lines.append(f'ace_quality_edit_convergence_rate{{agent="all"}} {qm.get("edit_convergence_rate", 1.0)}')
     for agent_id, q_info in by_agent.items():

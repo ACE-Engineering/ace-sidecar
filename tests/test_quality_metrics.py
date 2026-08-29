@@ -355,8 +355,9 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert agy_q["verification_rate_pct"] == 0.0
     assert agy_q["tool_success_rate_pct"] == 0.0
     # Every edit landed first try, so convergence is clean even though nothing verified.
+    # It is diagnostic, so a perfect convergence rate does not lift the score at all.
     assert agy_q["edit_convergence_rate_pct"] == 100.0
-    assert agy_q["quality_score"] == 35
+    assert agy_q["quality_score"] == 0
 
     models = [m["model"] for m in qm["by_model"]]
     assert "claude-sonnet-4-6" in models
@@ -697,11 +698,57 @@ def test_quality_score_weighting() -> None:
     assert qm["verification_rate"] == 1.0  # the one editing session ran pytest
     assert qm["edit_convergence_rate"] == 0.5
     assert qm["tool_success_rate"] == 0.9
-    # 0.45(1.0) + 0.35(0.5) + 0.20(0.9) = 0.805 -> 80 (int(round()) is half-to-even)
-    assert qm["quality_score"] == int(round((0.45 * 1.0 + 0.35 * 0.5 + 0.20 * 0.9) * 100.0))
-    assert qm["quality_score"] == 80
-    assert qm["grade"] == "B"
+    # 0.70(1.0) + 0.30(0.9) = 0.97. Convergence is 0.5 and does not enter the score.
+    assert qm["quality_score"] == int(round((0.70 * 1.0 + 0.30 * 0.9) * 100.0))
+    assert qm["quality_score"] == 97
+    assert qm["grade"] == "A"
     assert qm["tool_error_rate_pct"] == 10.0
+
+
+def test_convergence_is_diagnostic_not_scored() -> None:
+    """Two slices identical but for convergence must score the same."""
+    from ace.sidecar.insights import _DIAGNOSTIC_RATES, _QUALITY_WEIGHTS
+
+    assert not set(_DIAGNOSTIC_RATES) & {k for k, _ in _QUALITY_WEIGHTS}
+    assert round(sum(w for _, w in _QUALITY_WEIGHTS), 6) == 1.0
+
+    def _build(edits_per_file: int) -> Dict[str, Any]:
+        calls: List[Dict[str, Any]] = []
+        for f in range(4):
+            calls += [
+                {"name": "Edit", "raw_target": f"src/f{f}.py", "is_edit": True}
+                for _ in range(edits_per_file)
+            ]
+        calls.append({"name": "Bash", "command": "pytest", "is_test_run": True})
+        return {
+            "session": "s1",
+            "agent_type": "claude",
+            "cwds": ["/test"],
+            "events": [],
+            "turns": [
+                {
+                    "model": "claude-sonnet-4-6",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": calls,
+                }
+            ],
+        }
+
+    clean = quality_metrics([_build(1)])
+    thrashed = quality_metrics([_build(9)])
+
+    assert clean["edit_convergence_rate"] == 1.0
+    assert thrashed["edit_convergence_rate"] == 0.0
+    # Wildly different convergence, identical verification and tool success -> same score.
+    assert clean["quality_score"] == thrashed["quality_score"] == 100
+    # ...but the diagnostic still names the offenders.
+    assert thrashed["thrashed_files_distinct"] == 4
+    assert clean["thrashed_files_list"] == []
 
 
 def test_thrash_list_is_ranked_by_severity_and_capped() -> None:

@@ -926,10 +926,11 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"Grade {grade}" if scored else "no editing sessions in scope",
             delta="COMPOSITE",
             title=(
-                "Weighted index over the three tiles beside it: verification rate (45%), "
-                "edit convergence (35%), tool success (20%).\n"
-                "Nothing else feeds it — a figure that restates one of these three would "
-                "count that signal twice."
+                "Weighted index over two of the tiles beside it: verification rate (70%) "
+                "and tool success (30%).\n"
+                "Edit convergence is measured and shown but deliberately not scored: across "
+                "models it varies by ~8 points against verification's ~57, so it dragged "
+                "every score down by a near constant amount instead of separating anything."
             ),
         ),
         _st(
@@ -949,13 +950,15 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             "edit_convergence",
             conv_fig,
             f"{thrash_cnt} of {files_edited} needed 3+ passes",
-            delta="EDIT STABILITY",
+            delta="DIAGNOSTIC · NOT SCORED",
             dcls=conv_cls,
             title=(
                 "Share of edited files that landed in fewer than three passes, counted once "
                 "per session that touched them.\n"
-                "A file rewritten three times in one session did not converge. Agent "
-                "planning scratch files are excluded — they are bookkeeping, not code."
+                "Diagnostic only — it does not feed the quality score. Three or more edits "
+                "is the 76th percentile of the edit distribution, so this fires on about a "
+                "third of all files: useful for finding the outliers named below, too "
+                "common to grade on. Agent planning scratch files are excluded."
             ),
         ),
         _st(
@@ -1056,7 +1059,8 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         note = (
             f"{len(engine_rows)} engine{'' if len(engine_rows) == 1 else 's'} · "
             f"{len(model_rows)} model{'' if len(model_rows) == 1 else 's'} · "
-            f"\u2265{MIN_QUALITY_EVAL_SESSIONS} sessions and \u2265{MIN_QUALITY_EVAL_TURNS} turns"
+            f"\u2265{MIN_QUALITY_EVAL_SESSIONS} sessions and \u2265{MIN_QUALITY_EVAL_TURNS} turns · "
+            f"convergence is diagnostic, not scored"
         )
         matrix_table = (
             _q_hdr("Engine &amp; model reliability", note)
@@ -1066,7 +1070,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
                     ("Engine / model", False),
                     ("Score", False),
                     ("Verification", True),
-                    ("Convergence", True),
+                    ("Convergence †", True),
                     ("Tool success", True),
                     ("Sessions", True),
                     ("Turns", True),
@@ -1103,7 +1107,8 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             _q_hdr(
                 "Capability by coding task domain",
                 f"{len(category_rows)} active domain"
-                f"{'' if len(category_rows) == 1 else 's'} · by session volume",
+                f"{'' if len(category_rows) == 1 else 's'} · by session volume · "
+                f"convergence is diagnostic, not scored",
             )
             + "<div class='qwrap'><table class='qt'>"
             + _q_head(
@@ -1111,7 +1116,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
                     ("Task domain", False),
                     ("Score", False),
                     ("Verification", True),
-                    ("Convergence", True),
+                    ("Convergence †", True),
                     ("Tool success", True),
                     ("Sessions", True),
                     ("Best fit engine / model", False),
