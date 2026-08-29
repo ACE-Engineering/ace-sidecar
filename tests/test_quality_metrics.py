@@ -209,7 +209,9 @@ def test_quality_metrics_unverified_and_thrashed_session() -> None:
     assert qm["sessions_with_edits"] == 1
     assert qm["sessions_with_tests"] == 0
     assert qm["thrashed_files_count"] == 1
-    assert "src/flaky.py" in qm["thrashed_files_list"]
+    assert qm["thrashed_files_list"] == [
+        {"path": "src/flaky.py", "edits": 4, "sessions": 1}
+    ]
     # The only file edited was thrashed, so nothing converged.
     assert qm["files_edited"] == 1
     assert qm["edit_convergence_rate"] == 0.0
@@ -353,8 +355,9 @@ def test_quality_metrics_by_agent_and_model() -> None:
     assert agy_q["verification_rate_pct"] == 0.0
     assert agy_q["tool_success_rate_pct"] == 0.0
     # Every edit landed first try, so convergence is clean even though nothing verified.
+    # It is diagnostic, so a perfect convergence rate does not lift the score at all.
     assert agy_q["edit_convergence_rate_pct"] == 100.0
-    assert agy_q["quality_score"] == 35
+    assert agy_q["quality_score"] == 0
 
     models = [m["model"] for m in qm["by_model"]]
     assert "claude-sonnet-4-6" in models
@@ -431,7 +434,11 @@ def test_quality_metrics_convergence_counts_session_file_pairs() -> None:
     assert qm["files_edited"] == 4
     assert qm["thrashed_files_count"] == 1
     assert qm["edit_convergence_rate"] == 0.75
-    assert qm["thrashed_files_list"] == ["src/hot.py"]
+    # One path, thrashed in one of the four sessions, worst pass count carried through.
+    assert qm["thrashed_files_list"] == [
+        {"path": "src/hot.py", "edits": 4, "sessions": 1}
+    ]
+    assert qm["thrashed_files_distinct"] == 1
 
 
 def test_quality_metrics_excludes_agent_scratch_files() -> None:
@@ -691,8 +698,276 @@ def test_quality_score_weighting() -> None:
     assert qm["verification_rate"] == 1.0  # the one editing session ran pytest
     assert qm["edit_convergence_rate"] == 0.5
     assert qm["tool_success_rate"] == 0.9
-    # 0.45(1.0) + 0.35(0.5) + 0.20(0.9) = 0.805 -> 80 (int(round()) is half-to-even)
-    assert qm["quality_score"] == int(round((0.45 * 1.0 + 0.35 * 0.5 + 0.20 * 0.9) * 100.0))
-    assert qm["quality_score"] == 80
-    assert qm["grade"] == "B"
+    # 0.70(1.0) + 0.30(0.9) = 0.97. Convergence is 0.5 and does not enter the score.
+    assert qm["quality_score"] == int(round((0.70 * 1.0 + 0.30 * 0.9) * 100.0))
+    assert qm["quality_score"] == 97
+    assert qm["grade"] == "A"
     assert qm["tool_error_rate_pct"] == 10.0
+
+
+def test_convergence_is_diagnostic_not_scored() -> None:
+    """Two slices identical but for convergence must score the same."""
+    from ace.sidecar.insights import _DIAGNOSTIC_RATES, _QUALITY_WEIGHTS
+
+    assert not set(_DIAGNOSTIC_RATES) & {k for k, _ in _QUALITY_WEIGHTS}
+    assert round(sum(w for _, w in _QUALITY_WEIGHTS), 6) == 1.0
+
+    def _build(edits_per_file: int) -> Dict[str, Any]:
+        calls: List[Dict[str, Any]] = []
+        for f in range(4):
+            calls += [
+                {"name": "Edit", "raw_target": f"src/f{f}.py", "is_edit": True}
+                for _ in range(edits_per_file)
+            ]
+        calls.append({"name": "Bash", "command": "pytest", "is_test_run": True})
+        return {
+            "session": "s1",
+            "agent_type": "claude",
+            "cwds": ["/test"],
+            "events": [],
+            "turns": [
+                {
+                    "model": "claude-sonnet-4-6",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                    "calls": calls,
+                }
+            ],
+        }
+
+    clean = quality_metrics([_build(1)])
+    thrashed = quality_metrics([_build(9)])
+
+    assert clean["edit_convergence_rate"] == 1.0
+    assert thrashed["edit_convergence_rate"] == 0.0
+    # Wildly different convergence, identical verification and tool success -> same score.
+    assert clean["quality_score"] == thrashed["quality_score"] == 100
+    # ...but the diagnostic still names the offenders.
+    assert thrashed["thrashed_files_distinct"] == 4
+    assert clean["thrashed_files_list"] == []
+
+
+def test_thrash_list_is_ranked_by_severity_and_capped() -> None:
+    """The panel is evidence, so the worst offender must not sort below an 'a' filename."""
+    from ace.sidecar.insights import _THRASH_LIST_MAX
+
+    def _edits(path: str, n: int) -> List[Dict[str, Any]]:
+        return [{"name": "Edit", "raw_target": path, "is_edit": True} for _ in range(n)]
+
+    calls: List[Dict[str, Any]] = _edits("zzz_worst.py", 40)
+    # Fifteen mildly thrashed files that all sort ahead of it alphabetically.
+    for i in range(15):
+        calls += _edits(f"aaa_{i:02}.py", 3)
+
+    qm = quality_metrics(
+        [
+            {
+                "session": "s1",
+                "agent_type": "claude",
+                "cwds": ["/test"],
+                "events": [],
+                "turns": [
+                    {
+                        "model": "claude-sonnet-4-6",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                        "calls": calls,
+                    }
+                ],
+            }
+        ]
+    )
+
+    listed = qm["thrashed_files_list"]
+    assert len(listed) == _THRASH_LIST_MAX
+    assert listed[0] == {"path": "zzz_worst.py", "edits": 40, "sessions": 1}
+    assert qm["thrashed_files_distinct"] == 16
+    assert [f["edits"] for f in listed] == sorted(
+        (f["edits"] for f in listed), reverse=True
+    )
+
+
+def test_edit_targets_normalise_quoting() -> None:
+    """`"/a/b.py"` and `/a/b.py` are one file, and the quoted form is still source."""
+    from ace.sidecar.insights import _classify_call, _norm_path
+
+    assert _norm_path('"/repo/src/app.py"') == "/repo/src/app.py"
+    assert _norm_path("'/repo/src/app.py'") == "/repo/src/app.py"
+    assert _norm_path("  /repo/src/app.py  ") == "/repo/src/app.py"
+
+    quoted = _classify_call("Edit", {"file_path": '"/repo/src/app.py"'})
+    bare = _classify_call("Edit", {"file_path": "/repo/src/app.py"})
+    assert quoted["raw_target"] == bare["raw_target"]
+    # The trailing quote used to defeat the extension check entirely.
+    assert quoted["is_src_file"] is True
+    assert quoted["target"] == bare["target"] if "target" in quoted else True
+
+    # Two spellings of one file are one file, and together they thrash it.
+    calls = [
+        {"name": "Edit", "raw_target": _classify_call("Edit", {"file_path": p})["raw_target"], "is_edit": True}
+        for p in ('"/repo/a.py"', "/repo/a.py", '"/repo/a.py"')
+    ]
+    qm = quality_metrics(
+        [
+            {
+                "session": "s1",
+                "agent_type": "claude",
+                "cwds": ["/test"],
+                "events": [],
+                "turns": [
+                    {
+                        "model": "claude-sonnet-4-6",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "ephemeral_5m_input_tokens": 0,
+                        "ephemeral_1h_input_tokens": 0,
+                        "calls": calls,
+                    }
+                ],
+            }
+        ]
+    )
+    assert qm["files_edited"] == 1
+    assert qm["thrashed_files_count"] == 1
+    assert qm["edit_convergence_rate"] == 0.0
+
+
+def _thrash_session(sid: str, paths: Dict[str, int]) -> Dict[str, Any]:
+    calls: List[Dict[str, Any]] = []
+    for p, n in paths.items():
+        calls += [{"name": "Edit", "raw_target": p, "is_edit": True} for _ in range(n)]
+    calls.append({"name": "Bash", "command": "pytest", "is_test_run": True})
+    return {
+        "session": sid,
+        "agent_type": "claude",
+        "cwds": ["/test"],
+        "events": [],
+        "turns": [
+            {
+                "model": "claude-sonnet-4-6",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "calls": calls,
+            }
+        ],
+    }
+
+
+def test_quality_actions_flag_a_recurring_offender() -> None:
+    """One bad session is a bad session; the same file across many is a bad file."""
+    from ace.sidecar.insights import quality_actions
+
+    sess = [_thrash_session(f"s{i}", {"/repo/src/pkg/hot.py": 9}) for i in range(4)]
+    acts = quality_actions(sess, quality_metrics(sess))
+    top = acts[0]
+    assert "hot.py" in top["title"]
+    assert "4 separate sessions" in top["evidence"]
+    assert "9 edits" in top["evidence"]
+    assert top["kind"] == "fix"
+
+
+def test_quality_actions_flag_clones() -> None:
+    """The same file in two checkouts is one problem occupying two rows."""
+    from ace.sidecar.insights import quality_actions
+
+    sess = [
+        _thrash_session(
+            "s1",
+            {
+                "/Users/x/Documents/proj/src/a/b.py": 5,
+                "/Users/x/Downloads/clone/proj/src/a/b.py": 5,
+            },
+        )
+    ]
+    clones = next(
+        a for a in quality_actions(sess, quality_metrics(sess)) if "clones" in a["title"]
+    )
+    assert "1 file appears under 2 paths" in clones["evidence"]
+    assert "src/a/b.py in 2 checkouts" in clones["evidence"]
+
+
+def test_scratch_worktrees_are_excluded_from_convergence() -> None:
+    """A throwaway checkout is not a file in the codebase, so it never reaches the metric."""
+    from ace.sidecar.insights import _is_edit_artifact, quality_actions
+
+    for p in (
+        "/private/tmp/claude-501/abc/scratchpad/wt/src/a.py",
+        "/tmp/claude-99/x/scratchpad/b.py",
+        "/repo/.git/worktrees/feat/src/c.py",
+        "/var/folders/zz/T/d.py",
+    ):
+        assert _is_edit_artifact(p) is True, p
+    assert _is_edit_artifact("/Users/x/Documents/proj/src/a.py") is False
+
+    sess = [
+        _thrash_session(
+            "s1",
+            {
+                "/Users/x/Documents/proj/src/real.py": 5,
+                "/private/tmp/claude-501/abc/scratchpad/wt/src/throwaway.py": 9,
+            },
+        )
+    ]
+    qm = quality_metrics(sess)
+    # Only the real file is counted, listed, or acted on.
+    assert qm["files_edited"] == 1
+    assert qm["thrashed_files_distinct"] == 1
+    assert [f["path"] for f in qm["thrashed_files_list"]] == [
+        "/Users/x/Documents/proj/src/real.py"
+    ]
+    assert not any("scratch" in a["title"] for a in quality_actions(sess, qm))
+    # The session still counts as one that edited code and so ought to have verified.
+    assert qm["sessions_with_edits"] == 1
+
+
+def test_quality_actions_stay_silent_without_evidence() -> None:
+    """No thrashing, nothing to recommend — the block renders to nothing."""
+    from ace.sidecar.insights import quality_actions
+
+    sess = [_thrash_session("s1", {"/repo/src/a.py": 1, "/repo/src/b.py": 1})]
+    assert quality_actions(sess, quality_metrics(sess)) == []
+    assert quality_actions([], quality_metrics([])) == []
+
+
+def test_quality_actions_reach_the_payload_and_render() -> None:
+    from ace.sidecar.insights import _build_payload
+
+    sess = [_thrash_session(f"s{i}", {"/repo/src/pkg/hot.py": 9}) for i in range(4)]
+    payload = _build_payload(sess, capture=None, range_key="all", agent="all", store_path=None)
+    assert payload["quality"]["actions"]
+    html = render(payload)
+    assert "What to do about it" in html
+    assert "hot.py" in html
+
+
+def test_in_repo_agent_worktrees_are_excluded() -> None:
+    """Claude Code worktrees live at <repo>/.claude/worktrees/, not under a temp dir."""
+    from ace.sidecar.insights import _is_edit_artifact
+
+    real = "/Users/x/proj/src/ace/gateway/proxy.py"
+    copies = [
+        "/Users/x/proj/.claude/worktrees/agent-a5beeffe/src/ace/gateway/proxy.py",
+        "/Users/x/proj/.claude/worktrees/agent-ac499c44/src/ace/gateway/proxy.py",
+    ]
+    assert _is_edit_artifact(real) is False
+    for c in copies:
+        assert _is_edit_artifact(c) is True, c
+
+    sess = [_thrash_session("s1", {p: 5 for p in [real, *copies]})]
+    qm = quality_metrics(sess)
+    assert qm["files_edited"] == 1
+    assert [f["path"] for f in qm["thrashed_files_list"]] == [real]

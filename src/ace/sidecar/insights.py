@@ -127,11 +127,28 @@ def _rates(model: str):
     return rates_for(model)
 
 
+# Agents differ on whether a path argument arrives bare or wrapped in quotes — of 1485
+# distinct edit targets on a real corpus, 789 were quoted and 86 files appeared in BOTH
+# forms. Unnormalised, `"/a/b.py"` and `/a/b.py` are two different files: the edit counts
+# behind convergence split across the two keys, the thrash denominator inflates, and
+# `.endswith(".py")` fails on the quoted form, so it classifies as neither source nor test.
+_PATH_QUOTES = "\"'`"
+
+
+def _norm_path(v: str) -> str:
+    """A path argument as written, minus the quoting an agent wrapped it in."""
+    v = v.strip()
+    while len(v) >= 2 and v[0] in _PATH_QUOTES and v[-1] == v[0]:
+        v = v[1:-1].strip()
+    return v
+
+
 def _target(tool_input: Dict[str, Any]) -> Optional[str]:
     for k in _TARGET_KEYS:
         v = tool_input.get(k)
         if isinstance(v, str) and v:
-            return hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]
+            # Normalise before hashing, so one file is one digest however it was quoted.
+            return hashlib.sha256(_norm_path(v).encode("utf-8")).hexdigest()[:12]
     return None
 
 
@@ -306,7 +323,7 @@ def _classify_call(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
     ):
         v = tool_input.get(k)
         if isinstance(v, str) and v:
-            target_raw = v
+            target_raw = _norm_path(v) or None
             break
 
     cmd = None
@@ -2080,8 +2097,7 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 # ------------------------------------------------- code quality & reliability metrics
 
-# Three signals survive the audit, because only three of them are both derivable from a
-# transcript and actually about *code* quality:
+# Three signals are derivable from a transcript and actually about *code* quality:
 #
 #   verification   did the agent check its own work (tests/lint) after editing?
 #   convergence    did an edit land, or did the same file get rewritten over and over?
@@ -2092,12 +2108,31 @@ def totals(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
 # (task completion required verification, so it double-counted it), or could not be
 # computed correctly from a session record at all (wall-clock per "task" is session span
 # including idle; per-model it was the *whole* session's span attributed to one model).
-
+#
+# Only two of the three are *scored*, though, and that is a deliberate demotion rather than
+# an oversight. Measured across the models in a real 30-day scope:
+#
+#   verification   56.9 points of spread (38.1% to 95.0%)
+#   convergence     8.5 points          (66.0% to 74.5%)
+#   tool success    9.8 points          (89.9% to 99.7%)
+#
+# Convergence held 35% of the composite while varying by 8.5 points, so it applied a near
+# constant drag to every score instead of separating anything. It is arguably inverted too:
+# the worst model in that scope had the *best* convergence, because a model that barely
+# edits has little to fail to converge on. Thrashing remains real and worth surfacing — a
+# file rewritten 119 times in one session is a genuine finding — but it is diagnostic, not
+# a grade. It keeps its tile, its column and its evidence panel, and stays out of the score.
+#
+# The threshold behind it also argues against scoring it: 3+ edits in one session is the
+# 76th percentile of the edit distribution, so it fires on roughly a third of all files.
+# That is a description of normal work, not an exception worth grading.
 _QUALITY_WEIGHTS = (
-    ("verification_rate", 0.45),
-    ("edit_convergence_rate", 0.35),
-    ("tool_success_rate", 0.20),
+    ("verification_rate", 0.70),
+    ("tool_success_rate", 0.30),
 )
+
+# Computed and shown, never scored. See the note above.
+_DIAGNOSTIC_RATES = ("edit_convergence_rate",)
 
 # Antigravity writes its own planning scratch files through the same edit tools it uses on
 # the workspace. Those are agent bookkeeping, not code, and counting them makes every
@@ -2105,13 +2140,40 @@ _QUALITY_WEIGHTS = (
 _EDIT_ARTIFACT_MARKERS = ("/.gemini/antigravity/brain/", "/.system_generated/")
 _EDIT_ARTIFACT_SUFFIXES = ("walkthrough.md", "implementation_plan.md")
 
+# A path under one of these is a throwaway checkout — an agent worktree or a session
+# scratchpad. The editing in it is real work, so the session still counts as an editing
+# session that ought to verify; but the directory is gone and the file is a copy of one
+# that lives elsewhere, so it is not somewhere convergence can be improved and not a row
+# worth spending on the evidence panel. Same treatment as the planning files above.
+# Agent worktrees are not all under a temp dir: Claude Code puts them at
+# <repo>/.claude/worktrees/agent-<hash>/, inside the repo they are a copy of. Missing that
+# one left three throwaway copies of a file sitting in the panel as three separate files.
+_SCRATCH_MARKERS = (
+    "/private/tmp/claude-",
+    "/tmp/claude-",
+    "/var/folders/",
+    "/scratchpad/",
+    "/.claude/worktrees/",
+    "/.git/worktrees/",
+)
+
+
+def _is_scratch_path(p: str) -> bool:
+    return any(m in p for m in _SCRATCH_MARKERS)
+
 # A file rewritten this many times inside one session did not converge.
 _THRASH_EDITS = 3
 
+# How many offenders the evidence panel names. The rest are counted, not listed.
+_THRASH_LIST_MAX = 10
+
 
 def _is_edit_artifact(raw_target: str) -> bool:
-    return any(m in raw_target for m in _EDIT_ARTIFACT_MARKERS) or raw_target.endswith(
-        _EDIT_ARTIFACT_SUFFIXES
+    """Not a file in the developer's codebase: agent bookkeeping, or a throwaway checkout."""
+    return (
+        any(m in raw_target for m in _EDIT_ARTIFACT_MARKERS)
+        or raw_target.endswith(_EDIT_ARTIFACT_SUFFIXES)
+        or _is_scratch_path(raw_target)
     )
 
 
@@ -2156,6 +2218,7 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             "files_edited": 0,
             "thrashed_files_count": 0,
             "thrashed_files_list": [],
+            "thrashed_files_distinct": 0,
             "sessions_with_edits": 0,
             "sessions_with_tests": 0,
         }
@@ -2172,7 +2235,9 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     # fifty-one, and a set of paths cannot express that.
     files_edited = 0
     thrashed_pairs = 0
-    thrashed_paths: set = set()
+    # Per path: the worst single-session edit count, and how many sessions thrashed it.
+    thrash_worst: Dict[str, int] = {}
+    thrash_sessions: Dict[str, int] = {}
 
     for s in sess:
         session_has_edit = False
@@ -2205,7 +2270,8 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
             files_edited += 1
             if count >= _THRASH_EDITS:
                 thrashed_pairs += 1
-                thrashed_paths.add(fpath)
+                thrash_worst[fpath] = max(thrash_worst.get(fpath, 0), count)
+                thrash_sessions[fpath] = thrash_sessions.get(fpath, 0) + 1
 
     # Sessions that never edited anything are not evidence either way about test hygiene,
     # so they stay out of the denominator rather than scoring as a free pass. A slice with
@@ -2230,6 +2296,7 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "edit_convergence_rate": edit_convergence_rate,
         "tool_success_rate": tool_success_rate,
     }
+    assert not set(_DIAGNOSTIC_RATES) & {k for k, _ in _QUALITY_WEIGHTS}
     raw_score = sum(rates[k] * w for k, w in _QUALITY_WEIGHTS) * 100.0
     quality_score = max(0, min(100, int(round(raw_score)))) if scored else None
 
@@ -2252,7 +2319,13 @@ def _calc_quality_block(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
         "failed_tool_calls": failed_tool_calls,
         "files_edited": files_edited,
         "thrashed_files_count": thrashed_pairs,
-        "thrashed_files_list": sorted(thrashed_paths)[:10],
+        # Worst first. Alphabetical-then-truncate showed files with 3 edits while hiding
+        # one with 119 — the list is evidence, so it has to lead with the evidence.
+        "thrashed_files_list": [
+            {"path": f, "edits": thrash_worst[f], "sessions": thrash_sessions[f]}
+            for f in sorted(thrash_worst, key=lambda k: (-thrash_worst[k], k))[:_THRASH_LIST_MAX]
+        ],
+        "thrashed_files_distinct": len(thrash_worst),
         "sessions_with_edits": sessions_with_edits,
         "sessions_with_tests": sessions_with_tests,
     }
@@ -2270,6 +2343,169 @@ def _eligible(group: List[Dict[str, Any]]) -> bool:
     """Enough evidence for a row of its own?"""
     turns = sum(len(g.get("turns") or []) for g in group)
     return len(group) >= MIN_QUALITY_EVAL_SESSIONS and turns >= MIN_QUALITY_EVAL_TURNS
+
+
+# ------------------------------------------------- § 02 action items
+#
+# The rates say how things are going; these say what to do about it. Every item is derived
+# from the same session data the tiles are, fires only on a threshold actually crossed, and
+# carries the evidence that triggered it — a recommendation a reader cannot check is just
+# an opinion with a border around it.
+
+# Where a repo-relative path usually starts. Two absolute paths sharing a tail from one of
+# these are the same file in two checkouts far more often than they are a coincidence.
+_REPO_RELATIVE_ROOTS = (
+    "/src/",
+    "/tests/",
+    "/test/",
+    "/lib/",
+    "/app/",
+    "/scripts/",
+    "/eval/",
+    "/pkg/",
+    "/internal/",
+    "/cmd/",
+)
+
+# Below this a "recurring" offender is just a file someone worked on twice.
+_RECURRING_SESSIONS = 3
+
+
+def _repo_relative_key(p: str) -> str:
+    """The part of a path that identifies a file inside its repo, checkout aside.
+
+    ``~/Documents/proj/src/a/b.py`` and ``~/Downloads/clone/proj/src/a/b.py`` both reduce to
+    ``src/a/b.py``. Falls back to the last two components when no marker is present, which
+    still collapses most clones and never merges files with different names.
+    """
+    for marker in _REPO_RELATIVE_ROOTS:
+        i = p.rfind(marker)
+        if i != -1:
+            return p[i + 1 :]
+    return "/".join(p.rsplit("/", 2)[-2:])
+
+
+def _action(title: str, detail: str, evidence: str, kind: str = "fix") -> Dict[str, str]:
+    return {"title": title, "detail": detail, "evidence": evidence, "kind": kind}
+
+
+def _quality_with_actions(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """``quality_metrics`` plus the action items derived from the same sessions."""
+    qm = quality_metrics(sess)
+    qm["actions"] = quality_actions(sess, qm)
+    return qm
+
+
+def quality_actions(sess: List[Dict[str, Any]], qm: Dict[str, Any]) -> List[Dict[str, str]]:
+    """What the § 02 evidence is actually telling the reader to go do.
+
+    ``qm`` is the block ``quality_metrics`` already computed, so nothing is recounted here
+    beyond the per-path detail the panel does not keep.
+    """
+    actions: List[Dict[str, str]] = []
+    if not sess or not qm.get("scored"):
+        return actions
+
+    # Rebuild per-path thrash detail: the panel keeps only its top ten.
+    worst: Dict[str, int] = {}
+    n_sessions: Dict[str, int] = {}
+    for s in sess:
+        fe: Dict[str, int] = {}
+        for t in s.get("turns") or []:
+            for c in t.get("calls") or []:
+                if c.get("is_edit"):
+                    rt = c.get("raw_target") or c.get("target") or ""
+                    if rt and not _is_edit_artifact(rt):
+                        fe[rt] = fe.get(rt, 0) + 1
+        for f, n in fe.items():
+            if n >= _THRASH_EDITS:
+                worst[f] = max(worst.get(f, 0), n)
+                n_sessions[f] = n_sessions.get(f, 0) + 1
+
+    if not worst:
+        return actions
+
+    # Scratch worktrees never get here — _is_edit_artifact drops them upstream, so the
+    # panel, the convergence rate and these items all work from the same real files.
+    real = worst
+
+    # 1. A file that defeats agents repeatedly is a property of the file, not of one session.
+    recurring = sorted(
+        ((f, n_sessions[f], real[f]) for f in real if n_sessions[f] >= _RECURRING_SESSIONS),
+        key=lambda r: (-r[1], -r[2]),
+    )
+    if recurring:
+        f, n_sess, edits = recurring[0]
+        actions.append(
+            _action(
+                f"Look at {f.rsplit('/', 1)[-1]} before the next task that touches it",
+                "One session rewriting a file many times is a bad session. The same file "
+                "failing to settle across many sessions is a property of the file: usually "
+                "it is too large to edit safely, or the tests around it are too slow to give "
+                "an agent a tight enough loop. Splitting it, or making its test path faster, "
+                "pays back on every future task.",
+                f"{edits} edits in its worst session, thrashed in {n_sess} separate sessions",
+            )
+        )
+
+    # 2. One file under several checkouts occupies several slots and overstates the spread.
+    clones: Dict[str, set] = {}
+    for f in real:
+        clones.setdefault(_repo_relative_key(f), set()).add(f)
+    dup = {k: v for k, v in clones.items() if len(v) > 1}
+    if dup:
+        dup_paths = sum(len(v) for v in dup.values())
+        worst_key = max(dup, key=lambda k: len(dup[k]))
+        actions.append(
+            _action(
+                "Treat the list as narrower than it looks — clones are counted separately",
+                "The same file checked out under two paths is counted as two files, so a "
+                "single trouble spot can fill several rows and the spread of problems reads "
+                "wider than it is. Work from the repo-relative name when triaging.",
+                f"{len(dup)} file{' appears' if len(dup) == 1 else 's appear'} under "
+                f"{dup_paths} paths — worst: {worst_key} in {len(dup[worst_key])} checkouts",
+                kind="discount",
+            )
+        )
+
+    # 3. Concentration says where the effort would land, if it is lopsided enough to matter.
+    repos: Dict[str, int] = {}
+    for f in real:
+        key = _repo_relative_key(f)
+        head = f[: len(f) - len(key)].rstrip("/").rsplit("/", 1)[-1] or "unknown"
+        repos[head] = repos.get(head, 0) + 1
+    if repos:
+        top, top_n = max(repos.items(), key=lambda kv: kv[1])
+        total = sum(repos.values())
+        if len(repos) > 1 and top_n / total >= 0.5:
+            actions.append(
+                _action(
+                    f"Start with {top} — it holds most of the churn",
+                    "Convergence problems are not spread evenly across your projects. The "
+                    "one carrying most of them is where a prompt or structure change buys "
+                    "the most back.",
+                    f"{top_n} of {total} thrashed files ({top_n / total * 100:.0f}%) are in "
+                    f"{top}, across {len(repos)} projects",
+                    kind="focus",
+                )
+            )
+
+    # 4. The one that actually moves the score, when it is the thing going wrong.
+    v_pct = qm.get("verification_rate_pct", 100.0)
+    if v_pct < 75.0:
+        actions.append(
+            _action(
+                "Get tests running in more editing sessions",
+                "Verification is 70% of the score here, and it is the measure that separates "
+                "models most sharply. Sessions that change code without running anything are "
+                "where regressions escape.",
+                f"{qm.get('sessions_with_tests', 0)} of {qm.get('sessions_with_edits', 0)} "
+                f"editing sessions ran a test or lint command ({v_pct}%)",
+                kind="fix",
+            )
+        )
+
+    return actions[:4]
 
 
 def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -3129,7 +3365,7 @@ def _build_payload(
         "agent_breakdown": ab,
         "span": span(range_key, window, agg),
         "historical": agg,
-        "quality": quality_metrics(scoped),
+        "quality": _quality_with_actions(scoped),
         "time": time_budget(scoped),
         "parked": parked(scoped),
         "fleet": _fleet,
@@ -3360,7 +3596,7 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     by_agent = qm.get("by_agent") or {}
     by_model = qm.get("by_model") or []
 
-    lines.append("# HELP ace_quality_score Composite code quality score (0-100): 45% verification, 35% edit convergence, 20% tool success.")
+    lines.append("# HELP ace_quality_score Composite code quality score (0-100): 70% verification, 30% tool success.")
     lines.append("# TYPE ace_quality_score gauge")
     if qm.get("quality_score") is not None:
         lines.append(f'ace_quality_score{{agent="all"}} {qm["quality_score"]}')
@@ -3377,7 +3613,7 @@ def format_prometheus_metrics(d: Dict[str, Any]) -> str:
     for agent_id, q_info in by_agent.items():
         lines.append(f'ace_quality_verification_rate{{agent="{agent_id}"}} {q_info.get("verification_rate", 1.0)}')
 
-    lines.append("# HELP ace_quality_edit_convergence_rate Share of files edited in a session that did not need 3 or more passes.")
+    lines.append("# HELP ace_quality_edit_convergence_rate Diagnostic, not part of ace_quality_score. Share of files edited in a session that did not need 3 or more passes.")
     lines.append("# TYPE ace_quality_edit_convergence_rate gauge")
     lines.append(f'ace_quality_edit_convergence_rate{{agent="all"}} {qm.get("edit_convergence_rate", 1.0)}')
     for agent_id, q_info in by_agent.items():

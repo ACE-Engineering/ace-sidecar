@@ -24,6 +24,7 @@ from urllib.parse import quote
 from ace.sidecar.insights import (
     MIN_QUALITY_EVAL_SESSIONS,
     MIN_QUALITY_EVAL_TURNS,
+    _THRASH_EDITS,
 )
 
 try:
@@ -206,6 +207,33 @@ line-height:1.7;overflow-x:auto}
 border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
 .pan .pb{padding:13px 15px}
 .pan .pb .exp{color:var(--ink-3);font-size:12.5px;margin-top:10px;line-height:1.5}
+/* A caption belonging to one block, not to the panel: says what the block is and what to
+   do with it, right where it is read. A reader should never have to hover a tooltip or
+   scroll to a footnote to learn what a list of filenames is for. */
+.cap{color:var(--ink-2);font-size:12px;line-height:1.55;margin:5px 0 0}
+.cap b{color:var(--ink);font-weight:600}
+.capw{color:#B99A55;font-size:12px;line-height:1.55;margin:6px 0 9px}
+/* Action items. A recommendation a reader cannot check is an opinion with a border around
+   it, so every row carries the evidence that produced it, in mono, under the prose. The
+   left rule colours by kind: something to fix, something to discount, somewhere to start. */
+.act{margin-top:14px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2)}
+.act .ah{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+color:var(--ink-2);padding:10px 14px 0}
+.act ol{margin:8px 0 0;padding:0 14px 12px;list-style:none;counter-reset:a}
+.act li{counter-increment:a;position:relative;padding:9px 0 9px 30px;
+border-top:1px solid var(--line)}
+.act li:first-child{border-top:0}
+.act li::before{content:counter(a);position:absolute;left:0;top:10px;width:19px;height:19px;
+border-radius:50%;font-family:var(--mono);font-size:10.5px;line-height:19px;text-align:center;
+color:var(--ink-3);border:1px solid var(--line-2)}
+.act .at{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45}
+.act .ad{color:var(--ink-2);font-size:12px;line-height:1.55;margin-top:3px}
+.act .ae{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:5px;
+padding-left:9px;border-left:2px solid var(--line-2)}
+.act li.fix .ae{border-left-color:#3d3014}
+.act li.focus .ae{border-left-color:#1e355b}
+.act li.fix::before{color:var(--gold);border-color:#3d3014}
+.act li.focus::before{color:var(--blue);border-color:#1e355b}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{font-family:var(--mono);text-align:left;color:var(--ink-4);font-weight:400;padding:7px 8px;
 font-size:9.5px;text-transform:uppercase;letter-spacing:.11em;border-bottom:1px solid var(--line)}
@@ -246,7 +274,17 @@ color:var(--ink-2);font-weight:500;white-space:nowrap}
 .qhd .n{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);white-space:nowrap}
 .qwrap{border:1px solid var(--line);border-radius:3px;background:var(--surface);overflow-x:auto}
 .qt{width:100%;border-collapse:collapse;font-size:12.5px}
-.qt th{padding:9px 13px;white-space:nowrap;border-bottom:1px solid var(--line-2)}
+/* The global `th` is deliberately quiet — 9.5px, weight 400, --ink-4 — which works for a
+   two column strip but not here: against --surface that is roughly 2.3:1, under the 4.5:1
+   small text needs, on the row that tells you what every number below it means. These
+   headers carry more weight than usual (three rate columns that are easy to confuse), so
+   they get size, weight and --ink-2 for ~8:1, a ground of their own, and a heavier rule
+   under them. Still uppercase mono, just legible. */
+.qt th{padding:10px 13px;white-space:nowrap;color:var(--ink-2);font-size:11px;
+font-weight:600;letter-spacing:.07em;background:var(--surface-2);
+border-bottom:2px solid var(--line-2)}
+/* The footnote marker must not compete with the label it hangs off. */
+.qt th .dag{color:var(--ink-3);font-weight:400;margin-left:2px}
 .qt td{padding:10px 13px;border-bottom:1px solid var(--line);color:var(--ink-2);
 vertical-align:middle}
 .qt td.num{color:var(--ink)}
@@ -819,15 +857,33 @@ def _q_hdr(title: str, note: str) -> str:
     )
 
 
+_Q_HEAD_TIPS = {
+    "Score": "Composite: verification 70%, tool success 30%. Convergence is not in it.",
+    "Verification": "Share of editing sessions that also ran a test or lint command.",
+    "Convergence": "Share of edited files that took fewer than 3 passes in a session. "
+    "Diagnostic — not part of the score.",
+    "Tool success": "Share of tool calls that returned without an error.",
+    "Sessions": "Sessions in scope for this row.",
+    "Turns": "Model turns in scope for this row — the sample size behind the rates.",
+}
+
+
 def _q_head(cols: List[Tuple[str, bool]]) -> str:
-    """Header row. The flag marks a numeric column, which right-aligns with the data."""
-    return (
-        "<thead><tr>"
-        + "".join(
-            f"<th class='num'>{c}</th>" if n else f"<th>{c}</th>" for c, n in cols
-        )
-        + "</tr></thead>"
-    )
+    """Header row. The flag marks a numeric column, which right-aligns with the data.
+
+    A trailing dagger marks a diagnostic column and is dimmed away from its label, so the
+    label reads as a word rather than as a word with punctuation stuck to it.
+    """
+    out = []
+    for c, n in cols:
+        label, dag = (c[:-2], True) if c.endswith(" \u2020") else (c, False)
+        tip = _Q_HEAD_TIPS.get(label, "")
+        attrs = " class='num'" if n else ""
+        if tip:
+            attrs += f" title='{escape(tip)}'"
+        mark = "<span class='dag'>\u2020</span>" if dag else ""
+        out.append(f"<th{attrs}>{escape(label)}{mark}</th>")
+    return "<thead><tr>" + "".join(out) + "</tr></thead>"
 
 
 def _q_grade(score: Any, grade: str) -> str:
@@ -925,10 +981,11 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"Grade {grade}" if scored else "no editing sessions in scope",
             delta="COMPOSITE",
             title=(
-                "Weighted index over the three tiles beside it: verification rate (45%), "
-                "edit convergence (35%), tool success (20%).\n"
-                "Nothing else feeds it — a figure that restates one of these three would "
-                "count that signal twice."
+                "Weighted index over two of the tiles beside it: verification rate (70%) "
+                "and tool success (30%).\n"
+                "Edit convergence is measured and shown but deliberately not scored: across "
+                "models it varies by ~8 points against verification's ~57, so it dragged "
+                "every score down by a near constant amount instead of separating anything."
             ),
         ),
         _st(
@@ -948,13 +1005,15 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             "edit_convergence",
             conv_fig,
             f"{thrash_cnt} of {files_edited} needed 3+ passes",
-            delta="EDIT STABILITY",
+            delta="DIAGNOSTIC · NOT SCORED",
             dcls=conv_cls,
             title=(
                 "Share of edited files that landed in fewer than three passes, counted once "
                 "per session that touched them.\n"
-                "A file rewritten three times in one session did not converge. Agent "
-                "planning scratch files are excluded — they are bookkeeping, not code."
+                "Diagnostic only — it does not feed the quality score. Three or more edits "
+                "is the 76th percentile of the edit distribution, so this fires on about a "
+                "third of all files: useful for finding the outliers named below, too "
+                "common to grade on. Agent planning scratch files are excluded."
             ),
         ),
         _st(
@@ -972,18 +1031,62 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         ),
     ]
 
+    # The evidence behind the convergence tile: which files an agent could not settle, worst
+    # first, each with the count that makes it worth looking at. A path alone gives a reader
+    # no way to tell a file that took three passes from one that took a hundred.
     thrashed_files_list = qm.get("thrashed_files_list") or []
     thrash_html = ""
     if thrashed_files_list:
-        thrashed_items = "".join(
-            f"<li><code>{escape(_mask_home(f))}</code></li>"
-            for f in thrashed_files_list
+        rows = []
+        for f in thrashed_files_list:
+            n = f.get("edits", 0)
+            n_sess = f.get("sessions", 1)
+            sess_note = "" if n_sess <= 1 else f", in {n_sess} sessions"
+            rows.append(
+                f"<li><b style='color:var(--gold);'>{n}\u00d7</b> "
+                f"<code>{escape(_mask_home(str(f.get('path', ''))))}</code>"
+                f"<span style='color:var(--ink-4);'> — worst single session{escape(sess_note)}</span></li>"
+            )
+        distinct = qm.get("thrashed_files_distinct", len(thrashed_files_list))
+        more = (
+            f" · showing {len(thrashed_files_list)} of {distinct}"
+            if distinct > len(thrashed_files_list)
+            else ""
         )
         thrash_html = (
             f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid #3d3014;border-radius:4px;'>"
-            f"<b style='color:var(--gold);font-size:12px;'>⚠️ Repeatedly Modified Files (Thrashing Detected):</b>"
-            f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{thrashed_items}</ul>"
+            f"<b style='color:var(--gold);font-size:12px;'>\u26a0\ufe0f Files the agent could not settle "
+            f"({_THRASH_EDITS}+ edits in one session){escape(more)}:</b>"
+            f"<p class='capw'>Each of these is a file an agent kept rewriting without "
+            f"landing it — usually a sign it was stuck: fighting a failing test, or working "
+            f"from a prompt too vague to converge on. They are the best candidates for a "
+            f"sharper prompt, a smaller task, or a look at whether the file has grown too "
+            f"big to edit safely.</p>"
+            f"<ul style='margin:6px 0 0 16px;padding:0;font-size:12px;color:var(--ink-2);'>{''.join(rows)}</ul>"
+            f"<p class='cap' style='margin-top:9px'>Counted once per session, so "
+            f"<b>119\u00d7</b> means one session edited that file 119 times. Diagnostic "
+            f"only \u2014 about a third of all files cross this line, so it marks where to "
+            f"look, not a score.</p>"
             f"</div>"
+        )
+
+    # The rates say how things are going; this says what to do about it. Placed under the
+    # evidence it is drawn from, not in § 06, because a reader who has just read the file
+    # list is the reader who can act on it.
+    actions = qm.get("actions") or []
+    actions_html = ""
+    if actions:
+        items = "".join(
+            f"<li class='{escape(str(a.get('kind', 'fix')))}'>"
+            f"<div class='at'>{escape(str(a.get('title', '')))}</div>"
+            f"<div class='ad'>{escape(str(a.get('detail', '')))}</div>"
+            f"<div class='ae'>{escape(_mask_home(str(a.get('evidence', ''))))}</div>"
+            f"</li>"
+            for a in actions
+        )
+        actions_html = (
+            f"<div class='act'><div class='ah'>What to do about it</div>"
+            f"<ol>{items}</ol></div>"
         )
 
     # Engines and models share one ruler of columns, but they are different populations —
@@ -1039,7 +1142,8 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         note = (
             f"{len(engine_rows)} engine{'' if len(engine_rows) == 1 else 's'} · "
             f"{len(model_rows)} model{'' if len(model_rows) == 1 else 's'} · "
-            f"\u2265{MIN_QUALITY_EVAL_SESSIONS} sessions and \u2265{MIN_QUALITY_EVAL_TURNS} turns"
+            f"\u2265{MIN_QUALITY_EVAL_SESSIONS} sessions and \u2265{MIN_QUALITY_EVAL_TURNS} turns · "
+            f"convergence is diagnostic, not scored"
         )
         matrix_table = (
             _q_hdr("Engine &amp; model reliability", note)
@@ -1049,7 +1153,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
                     ("Engine / model", False),
                     ("Score", False),
                     ("Verification", True),
-                    ("Convergence", True),
+                    ("Convergence †", True),
                     ("Tool success", True),
                     ("Sessions", True),
                     ("Turns", True),
@@ -1086,7 +1190,8 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             _q_hdr(
                 "Capability by coding task domain",
                 f"{len(category_rows)} active domain"
-                f"{'' if len(category_rows) == 1 else 's'} · by session volume",
+                f"{'' if len(category_rows) == 1 else 's'} · by session volume · "
+                f"convergence is diagnostic, not scored",
             )
             + "<div class='qwrap'><table class='qt'>"
             + _q_head(
@@ -1094,7 +1199,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
                     ("Task domain", False),
                     ("Score", False),
                     ("Verification", True),
-                    ("Convergence", True),
+                    ("Convergence †", True),
                     ("Tool success", True),
                     ("Sessions", True),
                     ("Best fit engine / model", False),
@@ -1114,7 +1219,11 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         f"<div><b style='color:var(--ink);'>{qm.get('total_edits', 0)}</b> file edits</div>"
         f"<div><b style='color:var(--ink);'>{qm.get('total_tool_calls', 0)}</b> total tool executions</div>"
         f"</div>"
+        f"<p class='cap'>The denominators behind the tiles above — every rate on this page "
+        f"is two of these numbers divided, shown so a percentage is never a figure you have "
+        f"to take on trust.</p>"
         f"{thrash_html}"
+        f"{actions_html}"
         f"{matrix_table}"
         f"{category_table}"
         f"<div class='exp'>Measures how safely and stably coding agents operate in your repository: whether they verify their own edits, whether those edits converge, and whether their tool calls run. Turn count and elapsed time per session are in § 01 and the time budget, not here — they are throughput, not quality.</div>"
