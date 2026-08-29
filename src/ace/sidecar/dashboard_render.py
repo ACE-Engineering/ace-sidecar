@@ -213,6 +213,27 @@ border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;col
 .cap{color:var(--ink-2);font-size:12px;line-height:1.55;margin:5px 0 0}
 .cap b{color:var(--ink);font-weight:600}
 .capw{color:#B99A55;font-size:12px;line-height:1.55;margin:6px 0 9px}
+/* Action items. A recommendation a reader cannot check is an opinion with a border around
+   it, so every row carries the evidence that produced it, in mono, under the prose. The
+   left rule colours by kind: something to fix, something to discount, somewhere to start. */
+.act{margin-top:14px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2)}
+.act .ah{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+color:var(--ink-2);padding:10px 14px 0}
+.act ol{margin:8px 0 0;padding:0 14px 12px;list-style:none;counter-reset:a}
+.act li{counter-increment:a;position:relative;padding:9px 0 9px 30px;
+border-top:1px solid var(--line)}
+.act li:first-child{border-top:0}
+.act li::before{content:counter(a);position:absolute;left:0;top:10px;width:19px;height:19px;
+border-radius:50%;font-family:var(--mono);font-size:10.5px;line-height:19px;text-align:center;
+color:var(--ink-3);border:1px solid var(--line-2)}
+.act .at{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45}
+.act .ad{color:var(--ink-2);font-size:12px;line-height:1.55;margin-top:3px}
+.act .ae{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:5px;
+padding-left:9px;border-left:2px solid var(--line-2)}
+.act li.fix .ae{border-left-color:#3d3014}
+.act li.focus .ae{border-left-color:#1e355b}
+.act li.fix::before{color:var(--gold);border-color:#3d3014}
+.act li.focus::before{color:var(--blue);border-color:#1e355b}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{font-family:var(--mono);text-align:left;color:var(--ink-4);font-weight:400;padding:7px 8px;
 font-size:9.5px;text-transform:uppercase;letter-spacing:.11em;border-bottom:1px solid var(--line)}
@@ -1049,6 +1070,25 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             f"</div>"
         )
 
+    # The rates say how things are going; this says what to do about it. Placed under the
+    # evidence it is drawn from, not in § 06, because a reader who has just read the file
+    # list is the reader who can act on it.
+    actions = qm.get("actions") or []
+    actions_html = ""
+    if actions:
+        items = "".join(
+            f"<li class='{escape(str(a.get('kind', 'fix')))}'>"
+            f"<div class='at'>{escape(str(a.get('title', '')))}</div>"
+            f"<div class='ad'>{escape(str(a.get('detail', '')))}</div>"
+            f"<div class='ae'>{escape(_mask_home(str(a.get('evidence', ''))))}</div>"
+            f"</li>"
+            for a in actions
+        )
+        actions_html = (
+            f"<div class='act'><div class='ah'>What to do about it</div>"
+            f"<ol>{items}</ol></div>"
+        )
+
     # Engines and models share one ruler of columns, but they are different populations —
     # an engine row aggregates every model it drove. Group rows keep that readable.
     def _rate_cells(info: Dict[str, Any]) -> str:
@@ -1183,6 +1223,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
         f"is two of these numbers divided, shown so a percentage is never a figure you have "
         f"to take on trust.</p>"
         f"{thrash_html}"
+        f"{actions_html}"
         f"{matrix_table}"
         f"{category_table}"
         f"<div class='exp'>Measures how safely and stably coding agents operate in your repository: whether they verify their own edits, whether those edits converge, and whether their tool calls run. Turn count and elapsed time per session are in § 01 and the time budget, not here — they are throughput, not quality.</div>"

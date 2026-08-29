@@ -840,3 +840,86 @@ def test_edit_targets_normalise_quoting() -> None:
     assert qm["files_edited"] == 1
     assert qm["thrashed_files_count"] == 1
     assert qm["edit_convergence_rate"] == 0.0
+
+
+def _thrash_session(sid: str, paths: Dict[str, int]) -> Dict[str, Any]:
+    calls: List[Dict[str, Any]] = []
+    for p, n in paths.items():
+        calls += [{"name": "Edit", "raw_target": p, "is_edit": True} for _ in range(n)]
+    calls.append({"name": "Bash", "command": "pytest", "is_test_run": True})
+    return {
+        "session": sid,
+        "agent_type": "claude",
+        "cwds": ["/test"],
+        "events": [],
+        "turns": [
+            {
+                "model": "claude-sonnet-4-6",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 0,
+                "calls": calls,
+            }
+        ],
+    }
+
+
+def test_quality_actions_flag_a_recurring_offender() -> None:
+    """One bad session is a bad session; the same file across many is a bad file."""
+    from ace.sidecar.insights import quality_actions
+
+    sess = [_thrash_session(f"s{i}", {"/repo/src/pkg/hot.py": 9}) for i in range(4)]
+    acts = quality_actions(sess, quality_metrics(sess))
+    top = acts[0]
+    assert "hot.py" in top["title"]
+    assert "4 separate sessions" in top["evidence"]
+    assert "9 edits" in top["evidence"]
+    assert top["kind"] == "fix"
+
+
+def test_quality_actions_flag_clones_and_scratch_worktrees() -> None:
+    """The same file in two checkouts is one problem, and a worktree is not a place to fix."""
+    from ace.sidecar.insights import quality_actions
+
+    sess = [
+        _thrash_session(
+            "s1",
+            {
+                "/Users/x/Documents/proj/src/a/b.py": 5,
+                "/Users/x/Downloads/clone/proj/src/a/b.py": 5,
+                "/private/tmp/claude-501/abc/scratchpad/wt/src/a/c.py": 5,
+            },
+        )
+    ]
+    acts = quality_actions(sess, quality_metrics(sess))
+    # Both items are "discount" kind, so they must be matched by content, not keyed by kind.
+    clones = next(a for a in acts if "clones" in a["title"])
+    scratch = next(a for a in acts if "scratch" in a["title"])
+
+    # The two checkouts of b.py collapse to one repo-relative file; c.py is not a clone.
+    assert "1 file appears under 2 paths" in clones["evidence"]
+    assert "src/a/b.py in 2 checkouts" in clones["evidence"]
+    assert "1 of 3 thrashed paths" in scratch["evidence"]
+
+
+def test_quality_actions_stay_silent_without_evidence() -> None:
+    """No thrashing, nothing to recommend — the block renders to nothing."""
+    from ace.sidecar.insights import quality_actions
+
+    sess = [_thrash_session("s1", {"/repo/src/a.py": 1, "/repo/src/b.py": 1})]
+    assert quality_actions(sess, quality_metrics(sess)) == []
+    assert quality_actions([], quality_metrics([])) == []
+
+
+def test_quality_actions_reach_the_payload_and_render() -> None:
+    from ace.sidecar.insights import _build_payload
+
+    sess = [_thrash_session(f"s{i}", {"/repo/src/pkg/hot.py": 9}) for i in range(4)]
+    payload = _build_payload(sess, capture=None, range_key="all", agent="all", store_path=None)
+    assert payload["quality"]["actions"]
+    html = render(payload)
+    assert "What to do about it" in html
+    assert "hot.py" in html

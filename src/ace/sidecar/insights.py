@@ -2321,6 +2321,197 @@ def _eligible(group: List[Dict[str, Any]]) -> bool:
     return len(group) >= MIN_QUALITY_EVAL_SESSIONS and turns >= MIN_QUALITY_EVAL_TURNS
 
 
+# ------------------------------------------------- § 02 action items
+#
+# The rates say how things are going; these say what to do about it. Every item is derived
+# from the same session data the tiles are, fires only on a threshold actually crossed, and
+# carries the evidence that triggered it — a recommendation a reader cannot check is just
+# an opinion with a border around it.
+
+# A path under one of these is a throwaway checkout — an agent worktree or a session
+# scratchpad — not a file in the developer's codebase. It counts as work done, but naming
+# it as a file to go fix wastes a slot on a directory that no longer exists.
+_SCRATCH_MARKERS = (
+    "/private/tmp/claude-",
+    "/scratchpad/",
+    "/.git/worktrees/",
+    "/var/folders/",
+    "/tmp/claude-",
+)
+
+# Where a repo-relative path usually starts. Two absolute paths sharing a tail from one of
+# these are the same file in two checkouts far more often than they are a coincidence.
+_REPO_RELATIVE_ROOTS = (
+    "/src/",
+    "/tests/",
+    "/test/",
+    "/lib/",
+    "/app/",
+    "/scripts/",
+    "/eval/",
+    "/pkg/",
+    "/internal/",
+    "/cmd/",
+)
+
+# Below this a "recurring" offender is just a file someone worked on twice.
+_RECURRING_SESSIONS = 3
+
+
+def _is_scratch_path(p: str) -> bool:
+    return any(m in p for m in _SCRATCH_MARKERS)
+
+
+def _repo_relative_key(p: str) -> str:
+    """The part of a path that identifies a file inside its repo, checkout aside.
+
+    ``~/Documents/proj/src/a/b.py`` and ``~/Downloads/clone/proj/src/a/b.py`` both reduce to
+    ``src/a/b.py``. Falls back to the last two components when no marker is present, which
+    still collapses most clones and never merges files with different names.
+    """
+    for marker in _REPO_RELATIVE_ROOTS:
+        i = p.rfind(marker)
+        if i != -1:
+            return p[i + 1 :]
+    return "/".join(p.rsplit("/", 2)[-2:])
+
+
+def _action(title: str, detail: str, evidence: str, kind: str = "fix") -> Dict[str, str]:
+    return {"title": title, "detail": detail, "evidence": evidence, "kind": kind}
+
+
+def _quality_with_actions(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """``quality_metrics`` plus the action items derived from the same sessions."""
+    qm = quality_metrics(sess)
+    qm["actions"] = quality_actions(sess, qm)
+    return qm
+
+
+def quality_actions(sess: List[Dict[str, Any]], qm: Dict[str, Any]) -> List[Dict[str, str]]:
+    """What the § 02 evidence is actually telling the reader to go do.
+
+    ``qm`` is the block ``quality_metrics`` already computed, so nothing is recounted here
+    beyond the per-path detail the panel does not keep.
+    """
+    actions: List[Dict[str, str]] = []
+    if not sess or not qm.get("scored"):
+        return actions
+
+    # Rebuild per-path thrash detail: the panel keeps only its top ten.
+    worst: Dict[str, int] = {}
+    n_sessions: Dict[str, int] = {}
+    for s in sess:
+        fe: Dict[str, int] = {}
+        for t in s.get("turns") or []:
+            for c in t.get("calls") or []:
+                if c.get("is_edit"):
+                    rt = c.get("raw_target") or c.get("target") or ""
+                    if rt and not _is_edit_artifact(rt):
+                        fe[rt] = fe.get(rt, 0) + 1
+        for f, n in fe.items():
+            if n >= _THRASH_EDITS:
+                worst[f] = max(worst.get(f, 0), n)
+                n_sessions[f] = n_sessions.get(f, 0) + 1
+
+    if not worst:
+        return actions
+
+    real = {f: v for f, v in worst.items() if not _is_scratch_path(f)}
+
+    # 1. A file that defeats agents repeatedly is a property of the file, not of one session.
+    recurring = sorted(
+        ((f, n_sessions[f], real[f]) for f in real if n_sessions[f] >= _RECURRING_SESSIONS),
+        key=lambda r: (-r[1], -r[2]),
+    )
+    if recurring:
+        f, n_sess, edits = recurring[0]
+        actions.append(
+            _action(
+                f"Look at {f.rsplit('/', 1)[-1]} before the next task that touches it",
+                "One session rewriting a file many times is a bad session. The same file "
+                "failing to settle across many sessions is a property of the file: usually "
+                "it is too large to edit safely, or the tests around it are too slow to give "
+                "an agent a tight enough loop. Splitting it, or making its test path faster, "
+                "pays back on every future task.",
+                f"{edits} edits in its worst session, thrashed in {n_sess} separate sessions",
+            )
+        )
+
+    # 2. One file under several checkouts occupies several slots and overstates the spread.
+    clones: Dict[str, set] = {}
+    for f in real:
+        clones.setdefault(_repo_relative_key(f), set()).add(f)
+    dup = {k: v for k, v in clones.items() if len(v) > 1}
+    if dup:
+        dup_paths = sum(len(v) for v in dup.values())
+        worst_key = max(dup, key=lambda k: len(dup[k]))
+        actions.append(
+            _action(
+                "Treat the list as narrower than it looks — clones are counted separately",
+                "The same file checked out under two paths is counted as two files, so a "
+                "single trouble spot can fill several rows and the spread of problems reads "
+                "wider than it is. Work from the repo-relative name when triaging.",
+                f"{len(dup)} file{' appears' if len(dup) == 1 else 's appear'} under "
+                f"{dup_paths} paths — worst: {worst_key} in {len(dup[worst_key])} checkouts",
+                kind="discount",
+            )
+        )
+
+    # 3. Throwaway checkouts are real work but not a place to go fix anything.
+    scratch = [f for f in worst if _is_scratch_path(f)]
+    if scratch:
+        actions.append(
+            _action(
+                "Ignore the scratch-worktree rows",
+                "Agent worktrees and session scratchpads are throwaway checkouts. The "
+                "editing they contain is real, but the directories are gone, so nothing in "
+                "them is a file to go and change.",
+                f"{len(scratch)} of {len(worst)} thrashed path"
+                f"{'' if len(worst) == 1 else 's'} sit under a scratchpad or worktree",
+                kind="discount",
+            )
+        )
+
+    # 4. Concentration says where the effort would land, if it is lopsided enough to matter.
+    repos: Dict[str, int] = {}
+    for f in real:
+        key = _repo_relative_key(f)
+        head = f[: len(f) - len(key)].rstrip("/").rsplit("/", 1)[-1] or "unknown"
+        repos[head] = repos.get(head, 0) + 1
+    if repos:
+        top, top_n = max(repos.items(), key=lambda kv: kv[1])
+        total = sum(repos.values())
+        if len(repos) > 1 and top_n / total >= 0.5:
+            actions.append(
+                _action(
+                    f"Start with {top} — it holds most of the churn",
+                    "Convergence problems are not spread evenly across your projects. The "
+                    "one carrying most of them is where a prompt or structure change buys "
+                    "the most back.",
+                    f"{top_n} of {total} thrashed files ({top_n / total * 100:.0f}%) are in "
+                    f"{top}, across {len(repos)} projects",
+                    kind="focus",
+                )
+            )
+
+    # 5. The one that actually moves the score, when it is the thing going wrong.
+    v_pct = qm.get("verification_rate_pct", 100.0)
+    if v_pct < 75.0:
+        actions.append(
+            _action(
+                "Get tests running in more editing sessions",
+                "Verification is 70% of the score here, and it is the measure that separates "
+                "models most sharply. Sessions that change code without running anything are "
+                "where regressions escape.",
+                f"{qm.get('sessions_with_tests', 0)} of {qm.get('sessions_with_edits', 0)} "
+                f"editing sessions ran a test or lint command ({v_pct}%)",
+                kind="fix",
+            )
+        )
+
+    return actions[:4]
+
+
 def quality_metrics(sess: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Calculates unified code quality, verification hygiene, and reliability metrics.
 
@@ -3178,7 +3369,7 @@ def _build_payload(
         "agent_breakdown": ab,
         "span": span(range_key, window, agg),
         "historical": agg,
-        "quality": quality_metrics(scoped),
+        "quality": _quality_with_actions(scoped),
         "time": time_budget(scoped),
         "parked": parked(scoped),
         "fleet": _fleet,
