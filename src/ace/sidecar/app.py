@@ -69,7 +69,7 @@ def build_sidecar_app(
     ``client`` injects an ``httpx.AsyncClient`` so tests can drive the real app through
     ``MockTransport`` without a live call.
     """
-    from fastapi import FastAPI
+    from fastapi import Cookie, FastAPI
     from fastapi.responses import HTMLResponse
 
     from ace.gateway.messages import MessagesConfig, install_messages_route
@@ -121,21 +121,55 @@ def build_sidecar_app(
 
     @app.get("/dashboard", response_class=HTMLResponse)
     @app.get("/", response_class=HTMLResponse)
-    async def dashboard(range: str = "30d", agent: str = "all") -> Any:
-        from ace.sidecar.dashboard_render import render
+    async def dashboard(
+        range: str = "30d",
+        agent: str = "all",
+        theme: Optional[str] = None,
+        ace_theme: Optional[str] = Cookie(default=None),
+    ) -> Any:
+        """The dashboard. ``theme`` CHANGES the preference; the cookie carries it thereafter.
+
+        A cookie rather than a query parameter threaded through every link, for two reasons
+        that are really the same one: the page reloads itself every 20 seconds via
+        ``<meta refresh>`` to a bare URL, and the rail's own nav is anchors. Both would have
+        to learn about the theme to preserve it, and the one that forgot would silently
+        reset the page under a reader. The cookie is read by all of them for free.
+        """
+        from ace.sidecar.dashboard_render import DEFAULT_THEME, render, resolve_theme
         from ace.sidecar.insights import DEFAULT_RANGE, RANGES, build
 
         key = range if range in RANGES else DEFAULT_RANGE
-        return HTMLResponse(
+        chosen = resolve_theme(theme if theme is not None else ace_theme)
+        resp = HTMLResponse(
             render(
                 build(
                     store=accountant,
                     capture=capture_summary(),
                     range_key=key,
                     agent=agent,
-                )
+                ),
+                theme=chosen,
             )
         )
+        if theme is not None:
+            if chosen == DEFAULT_THEME:
+                # `auto` is the absence of a preference, so it CLEARS rather than stores.
+                # Writing "auto" into the cookie and deleting it in the same response emits
+                # both headers and the client is entitled to keep the first — which makes
+                # auto unreachable once either theme has been picked.
+                resp.delete_cookie("ace_theme", samesite="lax")
+            else:
+                # SameSite=Lax and no Secure flag: this server is loopback-only over plain
+                # HTTP, where Secure would mean the cookie is simply never stored. Not
+                # sensitive — it holds one of two literal words.
+                resp.set_cookie(
+                    "ace_theme",
+                    chosen,
+                    max_age=60 * 60 * 24 * 365,
+                    samesite="lax",
+                    httponly=False,
+                )
+        return resp
 
     @app.get("/api/report")
     async def report(range: str = "30d", agent: str = "all") -> dict:
