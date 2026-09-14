@@ -234,6 +234,55 @@ def cmd_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup_claude(args: argparse.Namespace) -> int:
+    """Configure Claude Code to use local optimized MCP tools and disable vanilla tools."""
+    from ace.sidecar.tools.claude_config import install_claude_config
+
+    res = install_claude_config(workspace_dir=args.workspace)
+    print("✨ Configured Claude Code with ACE Optimized Tools:")
+    print(f"  Settings: {res['settings_path']}")
+    print(f"  Agent:    {res['agent_path']}")
+    print("\nNext steps:")
+    print("1. Start sidecar: ace up")
+    print("2. Run Claude Code pointing to sidecar:")
+    print("   export ANTHROPIC_BASE_URL=http://127.0.0.1:8787")
+    print("   claude")
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Run the local stdio MCP server for Claude Code."""
+    from ace.sidecar.tools.mcp_server import run_mcp_server
+
+    run_mcp_server()
+    return 0
+
+
+def cmd_optimize(args: argparse.Namespace) -> int:
+    """Run compression dry-run on a JSON request payload to preview token savings."""
+    from ace.sidecar.compression.engine import ContextOptimizer
+
+    if not args.file:
+        print("Usage: ace optimize --file <request_payload.json>")
+        return 1
+
+    with open(args.file, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+
+    opt = ContextOptimizer(max_tool_bytes=args.max_tool_bytes)
+    res = opt.optimize_request(payload, force_idle_compaction=args.force_idle)
+
+    print("🔍 Context Optimization Dry-Run Results:")
+    print(f"  Bytes Saved:             {res.saved_bytes} bytes")
+    print(f"  Estimated Tokens Saved:  ~{res.saved_tokens_est} tokens")
+    print(f"  Tool Results Truncated:  {res.tool_results_truncated}")
+    print(f"  Reads Deduplicated:      {res.reads_deduped}")
+    print(f"  Prose Turns Compressed:  {res.prose_turns_compressed}")
+    print(f"  Idle Compacted:          {res.idle_compacted}")
+    return 0
+
+
+
 _UP_EPILOG = f"""\
 Every option above can also be set in {CONFIG_PATH} or in the environment, so the
 invocation you use every day can be typed as a bare `ace up`. Precedence is always:
@@ -373,6 +422,36 @@ def build_parser() -> argparse.ArgumentParser:
         description='Print `export ANTHROPIC_BASE_URL=...` for use with eval "$(ace env)".',
     )
     env.set_defaults(func=cmd_env)
+
+    setup_parser = sub.add_parser(
+        "setup-claude",
+        help="configure Claude Code workspace to use ACE optimized tools",
+        description="Write .claude/settings.local.json and agent prompt to use optimized MCP tools.",
+    )
+    setup_parser.add_argument(
+        "--workspace",
+        default=".",
+        help="workspace directory to configure (default: .)",
+    )
+    setup_parser.set_defaults(func=cmd_setup_claude)
+
+    mcp_parser = sub.add_parser(
+        "mcp",
+        help="run local stdio Model Context Protocol (MCP) server",
+        description="Run the local stdio MCP server for Claude Code.",
+    )
+    mcp_parser.set_defaults(func=cmd_mcp)
+
+    opt_parser = sub.add_parser(
+        "optimize",
+        help="preview token savings on a request JSON file",
+        description="Run dry-run context optimization on a request payload file.",
+    )
+    opt_parser.add_argument("--file", required=True, help="path to request JSON payload file")
+    opt_parser.add_argument("--max-tool-bytes", type=int, default=2048, help="tool output byte threshold")
+    opt_parser.add_argument("--force-idle", action="store_true", help="simulate post-300s TTL idle compaction")
+    opt_parser.set_defaults(func=cmd_optimize)
+
     return p
 
 
