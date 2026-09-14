@@ -30,6 +30,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import pathlib
 from typing import Any, Optional
 
 log = logging.getLogger("ace.sidecar")
@@ -40,6 +41,19 @@ def _iso_day(ts: Optional[float]) -> Optional[str]:
     if not ts:
         return None
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+
+# The vendored faces, as an allowlist. Two of the four are variable fonts spanning a weight
+# axis, which is why there are four files and not the nine weights the design system names.
+_FONT_DIR = pathlib.Path(__file__).parent / "static" / "fonts"
+_FONTS = frozenset(
+    {
+        "SpaceGrotesk-var.woff2",
+        "DMSans-var.woff2",
+        "DMMono-400.woff2",
+        "DMMono-500.woff2",
+    }
+)
 
 
 def build_sidecar_app(
@@ -264,6 +278,38 @@ def build_sidecar_app(
             }
         except Exception:  # pragma: no cover - dashboard extra, never load-bearing
             return {}
+
+    @app.get("/static/fonts/{name}")
+    async def font(name: str) -> Any:
+        """Serve one vendored webfont off the loopback interface.
+
+        The dashboard uses the AceFleet design system's three families, which acefleet.dev
+        pulls from fonts.googleapis.com. This cannot: the sidecar's whole claim is that
+        nothing leaves the machine, and a font request would report by its timing alone when
+        a developer was working. The bytes ship in the package instead — see
+        ``static/fonts/README.md``.
+
+        The name is matched against a fixed allowlist rather than sanitised. A sanitiser is a
+        thing to get wrong; a dict lookup cannot be walked out of, whatever the path
+        separator of the day is.
+        """
+        from fastapi import HTTPException
+        from fastapi.responses import Response
+
+        if name not in _FONTS:
+            raise HTTPException(status_code=404)
+        try:
+            data = (_FONT_DIR / name).read_bytes()
+        except OSError:  # pragma: no cover - a missing vendored file is a packaging bug
+            raise HTTPException(status_code=404)
+        # Content-addressed by name: a given filename is one immutable build of that face, so
+        # the browser never needs to revalidate. Without this the 20s meta-refresh re-requests
+        # every face on every reload.
+        return Response(
+            data,
+            media_type="font/woff2",
+            headers={"cache-control": "public, max-age=31536000, immutable"},
+        )
 
     @app.get("/healthz")
     async def healthz() -> dict:
