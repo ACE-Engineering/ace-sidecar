@@ -90,8 +90,17 @@ font-weight:500;font-style:normal;font-display:swap}
       exact values, where 3:1 is the applicable bar and the design's feel actually lives.
 
    2. THERE IS A DARK THEME. The prototype ships light only, but its own topbar draws an
-      AUTO / LIGHT / DARK switch, so the design anticipates one. The dark counterpart keeps
-      the palette warm rather than flipping to neutral grey, so the two read as one family.
+      AUTO / LIGHT / DARK switch, so the design anticipates one.
+
+      Its SURFACES ARE NEUTRAL CHARCOAL, not tinted. The first attempt carried the olive into
+      the ground itself, and every surface came out with a green channel above its red, so the
+      whole page read as olive rather than as dark. (The retired values are deliberately not
+      quoted here: a test greps the rendered page for off-palette colours, and a comment naming
+      them is indistinguishable from the bug returning.) The olive
+      belongs in the accent, which is the only place it can be seen as a colour rather than
+      as a cast over everything. Surfaces are now R>=G>B by a point or two: warm enough not to
+      look blue beside the light theme's paper, never green. If you are tempted to warm these
+      up again, check the channels before you do.
 
    3. NO FABRICATED CHROME. The prototype's sidebar carries a named user, an avatar, a
       monthly budget with a progress bar, and a notification bell. The sidecar has no
@@ -118,26 +127,26 @@ font-weight:500;font-style:normal;font-display:swap}
 color-scheme:light}
 
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
---paper:#14160F;--paper-deep:#0F110A;--card:#1B1E14;--rail:#101208;--elevated:#232719;
---ink:#EDEDE2;--ink-soft:#A8AC9C;--ink-faint:#8B9080;
---line:#272B1C;--line-dark:#3A3F2C;
---olive:#BFD45F;--olive-light:#3A4420;--olive-tint:#252C13;--primary:#A8BE4E;
+--paper:#131312;--paper-deep:#0E0E0D;--card:#1A1A18;--rail:#0F0F0E;--elevated:#222220;
+--ink:#EDEDE8;--ink-soft:#A8A8A0;--ink-faint:#8A8A82;
+--line:#262624;--line-dark:#393936;
+--olive:#BFD45F;--olive-light:#39401F;--olive-tint:#232519;--primary:#A8BE4E;
 --olive-text:#BFD45F;--aqua:#8CC4CA;--violet:#B0A2E0;--orange:#DCA86A;--crit:#F08A8A;
 --aqua-fill:#8CC4CA;--violet-fill:#B0A2E0;--orange-fill:#DCA86A;
 --aqua-tint:#16261F;--violet-tint:#1E1A2C;--orange-tint:#2A2015;
---on-olive:#14160F;
+--on-olive:#131312;
 --shadow:0 15px 45px rgba(0,0,0,.34);--shadow-sm:0 5px 16px rgba(0,0,0,.28);
 color-scheme:dark}}
 
 :root[data-theme="dark"]{
---paper:#14160F;--paper-deep:#0F110A;--card:#1B1E14;--rail:#101208;--elevated:#232719;
---ink:#EDEDE2;--ink-soft:#A8AC9C;--ink-faint:#8B9080;
---line:#272B1C;--line-dark:#3A3F2C;
---olive:#BFD45F;--olive-light:#3A4420;--olive-tint:#252C13;--primary:#A8BE4E;
+--paper:#131312;--paper-deep:#0E0E0D;--card:#1A1A18;--rail:#0F0F0E;--elevated:#222220;
+--ink:#EDEDE8;--ink-soft:#A8A8A0;--ink-faint:#8A8A82;
+--line:#262624;--line-dark:#393936;
+--olive:#BFD45F;--olive-light:#39401F;--olive-tint:#232519;--primary:#A8BE4E;
 --olive-text:#BFD45F;--aqua:#8CC4CA;--violet:#B0A2E0;--orange:#DCA86A;--crit:#F08A8A;
 --aqua-fill:#8CC4CA;--violet-fill:#B0A2E0;--orange-fill:#DCA86A;
 --aqua-tint:#16261F;--violet-tint:#1E1A2C;--orange-tint:#2A2015;
---on-olive:#14160F;
+--on-olive:#131312;
 --shadow:0 15px 45px rgba(0,0,0,.34);--shadow-sm:0 5px 16px rgba(0,0,0,.28);
 color-scheme:dark}
 

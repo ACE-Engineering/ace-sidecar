@@ -39,10 +39,12 @@ PALETTE = {
     "#77acb1", "#9b8dd2", "#d29e64", "#e9f1ef", "#f0edf8", "#f8eee1",
     # light — small-text values darkened to clear 4.5:1 (see the stylesheet's note 1)
     "#676B60", "#626F2B", "#426F74", "#6D58BD", "#8E5F29", "#9E2B2B",
-    # dark — the derived counterpart, kept warm rather than flipped to neutral grey
-    "#14160F", "#0F110A", "#1B1E14", "#101208", "#232719",
-    "#EDEDE2", "#A8AC9C", "#8B9080", "#272B1C", "#3A3F2C",
-    "#BFD45F", "#3A4420", "#252C13", "#A8BE4E",
+    # dark — NEUTRAL charcoal surfaces. Every one is R>=G>B; a green channel above red here
+    # is the bug that made the whole page read olive instead of dark, so the ordering is the
+    # invariant, not the exact values.
+    "#131312", "#0E0E0D", "#1A1A18", "#0F0F0E", "#222220",
+    "#EDEDE8", "#A8A8A0", "#8A8A82", "#262624", "#393936",
+    "#BFD45F", "#39401F", "#232519", "#A8BE4E",
     "#8CC4CA", "#B0A2E0", "#DCA86A", "#16261F", "#1E1A2C", "#2A2015", "#F08A8A",
 }
 
@@ -176,3 +178,22 @@ def test_the_switch_offers_all_three_states(client):
     html = client.get("/dashboard").text
     for t in ("auto", "light", "dark"):
         assert f"href='?theme={t}'" in html
+
+
+def test_dark_surfaces_are_never_green():
+    """The regression this exists for: the first dark palette tinted the SURFACES olive —
+    `#14160F`, `#1B1E14`, `#101208` — and each had a green channel above its red, so the page
+    read as olive rather than as dark. The accent is where the colour belongs; the ground is
+    charcoal. Asserting the channel ORDER rather than exact values, because the values are
+    allowed to be retuned and the ordering is not.
+    """
+    import re
+
+    src = __import__("ace.sidecar.dashboard_render", fromlist=["_CSS"])._CSS
+    dark = src[src.index(':root[data-theme="dark"]{'):]
+    dark = dark[: dark.index("}")]
+    surfaces = dict(re.findall(r"--(paper|paper-deep|card|rail|elevated|line|line-dark):(#[0-9A-Fa-f]{6})", dark))
+    assert surfaces, "no dark surface tokens found"
+    for name, hexv in surfaces.items():
+        r, g, b = (int(hexv[i : i + 2], 16) for i in (1, 3, 5))
+        assert r >= g >= b, f"--{name} {hexv} is tinted (R{r} G{g} B{b}); dark surfaces must be R>=G>B"
