@@ -197,3 +197,25 @@ def test_dark_surfaces_are_never_green():
     for name, hexv in surfaces.items():
         r, g, b = (int(hexv[i : i + 2], 16) for i in (1, 3, 5))
         assert r >= g >= b, f"--{name} {hexv} is tinted (R{r} G{g} B{b}); dark surfaces must be R>=G>B"
+
+
+def test_nothing_on_the_page_is_typeset_under_10px():
+    """A floor, not a preference. The prototype this design came from is a marketing mock and
+    typesets its labels at 7-9px; carried over literally, that put the section kickers, table
+    headers, chips and the hero diagram's own captions below the size at which they can be
+    read on a normal display. This page is a tool whose entire output is labelled numbers.
+
+    Covers the shorthand `font:` form too, which is how one 9px rule survived the first sweep.
+    """
+    import re
+
+    mod = __import__("ace.sidecar.dashboard_render", fromlist=["_CSS", "_MODE_CSS"])
+    sheets = mod._CSS + mod._MODE_CSS + mod._nav_css()
+    sizes = [float(m.group(1)) for m in re.finditer(r"font-size:\s*([\d.]+)px", sheets)]
+    sizes += [
+        float(m.group(1))
+        for m in re.finditer(r"font:\s*(?:[\w-]+\s+)*?([\d.]+)px", sheets)
+    ]
+    assert sizes, "no font sizes found — the selector probably moved"
+    too_small = sorted({s for s in sizes if s < 10})
+    assert not too_small, f"typeset under 10px: {too_small}"
