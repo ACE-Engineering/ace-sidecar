@@ -311,12 +311,12 @@ border:1px solid var(--line);background:var(--card);border-radius:var(--radius);
 .st{padding:20px 20px 18px;min-height:127px;border-right:1px solid var(--line)}
 .st:last-child{border-right:0}
 .st .k{display:flex;justify-content:space-between;color:var(--ink-faint);font-family:var(--mono);
-font-size:9px;letter-spacing:.05em;text-transform:uppercase;font-weight:400}
+font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:400}
 .st .v{color:var(--ink);font-family:var(--display);font-size:clamp(22px,2.4vw,29px);
 font-weight:600;letter-spacing:-.055em;margin:17px 0 7px;line-height:1.05;
 font-variant-numeric:tabular-nums}
 .st .v.mint{color:var(--olive-text)}.st .v.gold{color:var(--orange)}.st .v.crit{color:var(--crit)}
-.st .n{display:flex;align-items:center;gap:6px;color:var(--ink-faint);font-size:10px;
+.st .n{display:flex;align-items:center;gap:6px;color:var(--ink-faint);font-size:11px;
 font-family:var(--mono);flex-wrap:wrap}
 .st .n .d{color:var(--olive-text)}
 .st .n .d.warn{color:var(--orange)}.st .n .d.crit{color:var(--crit)}
@@ -326,19 +326,23 @@ font-family:var(--mono);flex-wrap:wrap}
 .pan{border:1px solid var(--line);background:var(--card);border-radius:var(--radius);
 margin-top:14px;overflow:hidden}
 .pan .ph{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;
-border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--ink-soft);
+border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--ink-soft);
 letter-spacing:.04em;background:var(--paper-deep)}
 .pan .pb{padding:15px 16px}
 .pan .pb .exp{color:var(--ink-soft);font-size:12px;margin-top:10px;line-height:1.5}
-table{width:100%;border-collapse:collapse;font-size:11px}
-th{color:var(--ink-faint);background:var(--paper-deep);font-family:var(--mono);font-size:9px;
-font-weight:400;letter-spacing:.08em;padding:12px 16px;text-align:left;text-transform:uppercase;
+/* Type sizes here are LARGER than the prototype's (11px body / 9px header). Its tables hold
+   four decorative rows; these hold the numbers the page exists to report, read at a glance
+   and often compared down a column. 9px mono headers and 11px figures are a mock's sizes, not
+   a tool's. */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{color:var(--ink-faint);background:var(--paper-deep);font-family:var(--mono);font-size:10.5px;
+font-weight:400;letter-spacing:.07em;padding:11px 16px;text-align:left;text-transform:uppercase;
 border-bottom:1px solid var(--line)}
-td{color:var(--ink-soft);border-top:1px solid var(--line);font-size:11px;padding:13px 16px}
+td{color:var(--ink-soft);border-top:1px solid var(--line);font-size:12.5px;padding:12px 16px}
 tr:hover td{background:var(--paper-deep)}
-td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px}
 th.num{text-align:right}
-td.m{font-family:var(--mono);font-size:10px}
+td.m{font-family:var(--mono);font-size:11.5px}
 td b{color:var(--ink);font-weight:600}
 tr.hi td{background:var(--olive-tint)}
 .cap{color:var(--ink-soft);font-size:12px;line-height:1.55;margin:5px 0 0}
@@ -347,27 +351,27 @@ tr.hi td{background:var(--olive-tint)}
 .src{font-family:var(--mono);font-size:10px;color:var(--ink-faint)}
 .src a{color:var(--ink-soft);border-bottom:1px solid var(--line-dark)}
 .src a:hover{color:var(--olive-text);border-bottom-color:var(--olive)}
-.calcbox{font-family:var(--mono);font-size:10.5px;color:var(--ink-soft);background:var(--paper-deep);
+.calcbox{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);background:var(--paper-deep);
 border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;margin-top:11px;
 line-height:1.7;overflow-x:auto}
 .calcbox b{color:var(--ink);font-weight:600}
 .calcbox .cm{color:var(--ink-faint)}
 .bar{display:flex;align-items:center;gap:10px;margin-bottom:5px}
-.bar .l{width:158px;font-family:var(--mono);font-size:10.5px;color:var(--ink-soft)}
+.bar .l{width:170px;font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
 .bar .t{flex:1;height:8px;background:var(--paper-deep);border-radius:99px;overflow:hidden}
 .bar .t>i{display:block;height:100%}
 .bar .v{width:150px;text-align:right;font-family:var(--mono);font-size:10.5px;
-color:var(--ink-faint);font-variant-numeric:tabular-nums}
+color:var(--ink-faint);font-variant-numeric:tabular-nums;font-size:11.5px}
 .pill{font-family:var(--mono);border:1px solid var(--line-dark);border-radius:999px;
-padding:3px 9px;font-size:9px;color:var(--ink-faint);letter-spacing:.06em;
+padding:3px 9px;font-size:10px;color:var(--ink-faint);letter-spacing:.06em;
 font-variant-numeric:tabular-nums;background:var(--card)}
 .pill.on{color:var(--olive-text);border-color:var(--olive);background:var(--olive-tint)}
 .pill.soon{color:var(--orange);border-color:var(--orange-fill);background:var(--orange-tint)}
-.tg{border:1px solid var(--line-dark);border-radius:var(--radius);padding:3px 8px;
+.tg{border:1px solid var(--line-dark);border-radius:var(--radius);padding:4px 9px;
 color:var(--ink-faint);background:var(--card)}
 .tg.s{color:var(--olive-text);border-color:var(--olive);background:var(--olive-tint)}
 .tg.HIGH{color:var(--crit)}.tg.MEDIUM{color:var(--orange)}.tg.NONE{color:var(--olive-text)}
-.tags{display:flex;gap:6px;flex-wrap:wrap;font-size:10px;font-family:var(--mono)}
+.tags{display:flex;gap:6px;flex-wrap:wrap;font-size:11px;font-family:var(--mono)}
 .rec{border:1px solid var(--line);border-left:3px solid var(--olive);background:var(--card);
 border-radius:var(--radius);padding:15px 18px;margin-bottom:10px}
 .rec.HIGH{border-left-color:var(--crit)}.rec.MEDIUM{border-left-color:var(--orange-fill)}
@@ -3226,7 +3230,7 @@ def render(d: Dict[str, Any], *, theme: str = DEFAULT_THEME) -> str:
     b.append(
         "<section class='hero'><div class='hero-copy'>"
         "<div class='eyebrow'><i></i>The local cost layer</div>"
-        "<h1>Make every coding-agent<br><em>token work harder.</em></h1>"
+        "<h1>Make every <em>local</em> coding-agent<br><em>token work harder.</em></h1>"
         "<p class='lede'>ACE reads what your agents actually sent — Claude Code, Antigravity "
         "and Codex — and prices it against the provider's own rate card. Every figure below is "
         "measured on this machine's transcripts, and nothing leaves it.</p>"
