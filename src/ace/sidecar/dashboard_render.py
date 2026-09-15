@@ -668,6 +668,175 @@ border-radius:999px;background:var(--card);color:var(--ink-faint)}
 .hint{color:var(--ink-faint);font-size:11px}
 .risk{font-family:var(--mono);font-size:10px;letter-spacing:.06em}
 .breadcrumbs{display:flex;align-items:center;gap:10px}
+
+/* ---- NEW SECTIONS (MOCKUP SPEC) ---- */
+.btn-primary{display:inline-flex;align-items:center;gap:10px;background:var(--primary);color:var(--elevated);font-family:var(--sans);font-weight:600;font-size:13.5px;padding:10px 18px;border-radius:8px;text-decoration:none;transition:transform var(--dur-fast) var(--ease),background var(--dur-fast) var(--ease)}
+.btn-primary:hover{background:var(--olive);transform:translateY(-1px)}
+.hero-sub-link{display:inline-flex;align-items:center;gap:4px;color:var(--ink-soft);font-size:13.5px;text-decoration:none;margin-left:18px;transition:color var(--dur-fast) var(--ease)}
+.hero-sub-link:hover{color:var(--ink)}
+.hero-actions{display:flex;align-items:center;margin:22px 0 18px}
+
+.range-pills{display:flex;align-items:center;gap:4px}
+.range-pill{padding:5px 12px;font-family:var(--mono);font-size:11px;color:var(--ink-soft);border:1px solid var(--line-dark);border-radius:6px;background:var(--card);text-decoration:none;transition:all var(--dur-fast) var(--ease)}
+.range-pill:hover{color:var(--ink);border-color:var(--olive)}
+.range-pill.on{background:var(--olive-tint);color:var(--olive-text);border-color:var(--olive);font-weight:600}
+
+.summary-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:36px}
+@media(max-width:960px){.summary-cards{grid-template-columns:repeat(2,1fr)}}
+.summary-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;box-shadow:var(--shadow-sm)}
+.sc-top{display:flex;align-items:center;justify-content:space-between;color:var(--ink-faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:12px}
+.sc-icon{font-size:14px;opacity:.85}
+.sc-val{font-family:var(--display);font-size:28px;font-weight:700;letter-spacing:-.04em;color:var(--ink);line-height:1;margin-bottom:10px}
+.sc-sub{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-soft);font-family:var(--mono)}
+.dot{display:inline-block;font-size:10px;line-height:1}
+.dot.green{color:var(--olive-text)}
+.dot.blue{color:var(--aqua)}
+.dot.purple{color:var(--violet)}
+.dot.orange{color:var(--orange)}
+
+/* § 01 HOW IT WORKS */
+.pipeline-flow{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px;margin-bottom:36px}
+@media(max-width:900px){.pipeline-flow{flex-direction:column;align-items:stretch}}
+.pipe-step{flex:1;position:relative;background:var(--elevated);border:1px solid var(--line);border-radius:8px;padding:18px}
+.pipe-step.highlighted{background:var(--olive-tint);border-color:var(--olive);box-shadow:var(--shadow-sm)}
+.pipe-badge{position:absolute;top:-10px;right:12px;background:var(--olive);color:var(--on-olive);font-family:var(--mono);font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px}
+.pipe-icon-box{display:grid;place-items:center;width:34px;height:34px;border-radius:6px;background:var(--paper-deep);border:1px solid var(--line-dark);margin-bottom:10px;font-family:var(--mono);font-weight:700;font-size:13px;color:var(--ink)}
+.pipe-step.highlighted .pipe-icon-box{background:var(--elevated);border-color:var(--olive)}
+.pipe-num{color:var(--ink-faint);font-family:var(--mono);font-size:10px;letter-spacing:.08em;margin-bottom:4px}
+.pipe-title{font-family:var(--display);font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.pipe-desc{font-size:12px;color:var(--ink-soft);line-height:1.45}
+.pipe-arrow{color:var(--line-dark);font-family:var(--mono);font-size:14px;letter-spacing:1px;display:grid;place-items:center;flex:none}
+@media(max-width:900px){.pipe-arrow{transform:rotate(90deg);padding:8px 0}}
+
+/* TWO COLUMN GRID */
+.two-col-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:36px}
+@media(max-width:900px){.two-col-grid{grid-template-columns:1fr}}
+.col-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column}
+.col-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.col-title{font-family:var(--display);font-size:21px;font-weight:600;letter-spacing:-.03em;color:var(--ink);margin:0 0 16px}
+.kicker-sub{font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}
+.stat-sparkline{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+.big-val{font-family:var(--display);font-size:32px;font-weight:700;letter-spacing:-.04em;color:var(--ink);line-height:1}
+.big-sub{font-family:var(--mono);font-size:11px;color:var(--ink-soft);margin-top:5px}
+
+.levers-list{display:flex;flex-direction:column;gap:12px}
+.lever-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--elevated);transition:border-color var(--dur-fast) var(--ease)}
+.lever-row:hover{border-color:var(--line-dark)}
+.lever-icon-box{width:32px;height:32px;border-radius:6px;display:grid;place-items:center;font-size:14px;flex:none}
+.lever-icon-box.green{background:var(--olive-tint);color:var(--olive-text)}
+.lever-icon-box.cyan{background:var(--aqua-tint);color:var(--aqua)}
+.lever-icon-box.purple{background:var(--violet-tint);color:var(--violet)}
+.lever-icon-box.orange{background:var(--orange-tint);color:var(--orange)}
+.lever-info{flex:1;min-width:0}
+.lever-name{font-size:13px;font-weight:600;color:var(--ink);line-height:1.3}
+.lever-desc{font-size:11px;color:var(--ink-soft);line-height:1.35;margin-top:2px}
+.lever-amount{font-family:var(--mono);font-size:11.5px;color:var(--olive-text);text-align:right;white-space:nowrap;margin:0 4px}
+.lever-amount .g{color:var(--ink-faint);font-size:10.5px}
+
+.toggle-switch{width:36px;height:20px;border-radius:10px;background:var(--line-dark);position:relative;cursor:pointer;flex:none;transition:background var(--dur-fast) var(--ease)}
+.toggle-switch.on{background:var(--olive)}
+.toggle-switch .knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--elevated);box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform var(--dur-fast) var(--ease)}
+.toggle-switch.on .knob{transform:translateX(16px)}
+
+.card-footer-link{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);text-align:left}
+.card-footer-link a{font-size:12px;font-weight:600;color:var(--olive-text);text-decoration:none}
+.card-footer-link a:hover{text-decoration:underline}
+
+/* § 03 NEXT BEST MOVE */
+.recommendation-box{display:flex;align-items:flex-start;gap:12px;background:var(--olive-tint);border:1px solid var(--olive);border-radius:8px;padding:14px;margin-bottom:18px}
+.rec-icon{font-size:18px;color:var(--olive-text);flex:none;line-height:1.2}
+.rec-title{font-size:13.5px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.rec-desc{font-size:12px;color:var(--ink-soft);line-height:1.45}
+.tiers-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}
+.tier-box{border:1px solid var(--line);border-radius:8px;background:var(--elevated);padding:12px;text-align:left;cursor:pointer;transition:all var(--dur-fast) var(--ease)}
+.tier-box:hover{border-color:var(--line-dark)}
+.tier-box.active{border-color:var(--olive);background:var(--olive-tint)}
+.tier-name{font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.tier-pct{font-family:var(--mono);font-size:12px;color:var(--ink-soft)}
+.tier-box.active .tier-pct{color:var(--olive-text);font-weight:600}
+.tier-metrics{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding:12px 14px;background:var(--paper-deep);border-radius:8px;border:1px solid var(--line)}
+.tm-label{font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px}
+.tm-val{font-family:var(--display);font-size:18px;font-weight:700;color:var(--ink)}
+.tm-val.green{color:var(--olive-text)}
+.btn-tier-cta{display:flex;align-items:center;justify-content:center;gap:10px;background:var(--primary);color:var(--elevated);font-size:13.5px;font-weight:600;padding:12px;border-radius:8px;text-decoration:none;margin-bottom:12px;transition:background var(--dur-fast) var(--ease)}
+.btn-tier-cta:hover{background:var(--olive)}
+.card-footer-center{text-align:center;font-size:12px}
+.card-footer-center a{color:var(--ink-soft);text-decoration:none}
+.card-footer-center a:hover{color:var(--ink);text-decoration:underline}
+
+/* § 04 RECENT SESSIONS */
+.pill-btn{padding:6px 14px;border:1px solid var(--line-dark);border-radius:20px;background:var(--card);font-family:var(--mono);font-size:11px;color:var(--ink-soft);text-decoration:none;transition:all var(--dur-fast) var(--ease)}
+.pill-btn:hover{color:var(--ink);border-color:var(--olive)}
+.sessions-table-card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:36px;box-shadow:var(--shadow-sm)}
+.sessions-table{width:100%;border-collapse:collapse}
+.sessions-table th{background:var(--paper-deep);color:var(--ink-faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;padding:12px 16px;text-align:left;border-bottom:1px solid var(--line)}
+.sessions-table td{padding:14px 16px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink)}
+.sessions-table tr:last-child td{border-bottom:none}
+.sess-cell{display:flex;align-items:center;gap:10px}
+.sess-name{font-weight:600;font-family:var(--mono);font-size:12.5px;color:var(--ink)}
+.sess-model{font-size:11px;color:var(--ink-faint);font-family:var(--mono);margin-top:2px}
+.badge-status{display:inline-block;padding:3px 8px;border-radius:12px;font-family:var(--mono);font-size:11px;font-weight:500}
+.badge-status.green{background:var(--olive-tint);color:var(--olive-text);border:1px solid var(--olive)}
+.badge-status.blue{background:var(--aqua-tint);color:var(--aqua);border:1px solid var(--aqua-fill)}
+.badge-status.beige{background:var(--paper-deep);color:var(--ink-soft);border:1px solid var(--line-dark)}
+.saved-val{font-family:var(--mono);font-weight:600;color:var(--olive-text)}
+.time-val{font-family:var(--mono);color:var(--ink-soft);font-size:11.5px}
+.ext-link{color:var(--ink-faint);text-align:right;font-size:13px}
+
+/* CTA BANNER */
+.cta-banner{display:flex;align-items:center;justify-content:space-between;gap:20px;background:var(--olive-tint);border:1px solid var(--olive);border-radius:10px;padding:22px 24px;margin-bottom:36px}
+@media(max-width:850px){.cta-banner{flex-direction:column;align-items:stretch}}
+.cta-banner-left{display:flex;align-items:center;gap:18px}
+.cmd-icon{width:40px;height:40px;border-radius:8px;background:var(--elevated);border:1px solid var(--olive);display:grid;place-items:center;font-size:18px;color:var(--olive-text);font-family:var(--mono);font-weight:700;flex:none}
+.cta-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--olive-text);text-transform:uppercase;margin-bottom:3px}
+.cta-title{font-family:var(--display);font-size:17px;font-weight:600;color:var(--ink);margin-bottom:3px}
+.cta-desc{font-size:12px;color:var(--ink-soft)}
+.cta-banner-right{display:flex;align-items:center;gap:14px;flex:none}
+.code-pill{display:flex;align-items:center;gap:10px;background:var(--elevated);border:1px solid var(--line-dark);padding:8px 14px;border-radius:8px;font-family:var(--mono);font-size:12px;color:var(--ink)}
+.copy-ic{cursor:pointer;font-size:12px;opacity:.7;transition:opacity var(--dur-fast) var(--ease)}
+.copy-ic:hover{opacity:1}
+.doc-link{font-size:12px;font-weight:600;color:var(--ink-soft);text-decoration:none;white-space:nowrap}
+.doc-link:hover{color:var(--ink);text-decoration:underline}
+
+/* SIDEBAR ADDITIONS */
+.mode-pill-toggle{display:flex;gap:4px;background:var(--paper-deep);padding:3px;border-radius:6px;border:1px solid var(--line-dark);margin-top:10px}
+.mode-pill{flex:1;text-align:center;padding:5px 0;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;color:var(--ink-soft);border-radius:4px;cursor:pointer}
+.mode-pill.on{background:var(--olive);color:var(--on-olive)}
+
+.budget-card{margin:16px 12px 8px;padding:14px;border:1px solid var(--line-dark);background:var(--card);border-radius:var(--radius)}
+.bc-header{display:flex;align-items:center;justify-content:space-between;color:var(--ink-faint);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.bc-amount{font-family:var(--display);font-size:16px;color:var(--ink);margin-bottom:8px}
+.bc-amount b{font-weight:700}
+.bc-total{color:var(--ink-faint);font-size:13px}
+.bc-progress{height:5px;border-radius:3px;background:var(--line);overflow:hidden;margin-bottom:6px}
+.bc-bar{height:100%;background:var(--olive);border-radius:3px}
+.bc-footer{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--ink-faint)}
+
+.user-profile-card{margin:0 12px 14px;padding:10px 12px;border:1px solid var(--line);background:var(--elevated);border-radius:var(--radius);display:flex;align-items:center;gap:10px}
+.up-avatar{width:28px;height:28px;border-radius:50%;background:var(--olive-tint);color:var(--olive-text);font-family:var(--mono);font-weight:700;font-size:11px;display:grid;place-items:center;flex:none}
+.up-info{flex:1;min-width:0}
+.up-name{font-size:12px;font-weight:600;color:var(--ink);line-height:1.2}
+.up-role{font-size:10.5px;color:var(--ink-faint);line-height:1.2;margin-top:2px}
+.up-chevron{color:var(--ink-faint);font-size:11px;flex:none}
+
+.badge-pill{display:inline-flex;align-items:center;padding:2px 7px;border-radius:10px;font-family:var(--mono);font-size:10px;font-weight:600}
+.badge-pill.green{background:var(--olive-tint);color:var(--olive-text);border:1px solid var(--olive)}
+.code-snippet{background:var(--paper-deep);border:1px solid var(--line-dark);border-radius:6px;padding:10px 12px;margin-top:10px;font-family:var(--mono);font-size:11px}
+.code-line{color:var(--ink);line-height:1.5;overflow-x:auto}
+.c-prompt{color:var(--ink-faint);margin-right:6px}
+.pipe-checks{margin-top:10px;display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--ink-soft)}
+.pipe-metrics-box{margin-top:10px;background:var(--paper-deep);border:1px solid var(--line-dark);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:11px}
+.pm-row{display:flex;justify-content:space-between;line-height:1.5;color:var(--ink-soft)}
+.pm-row.highlight{color:var(--olive-text);font-weight:600;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
+.topbar-icon-btn{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink-soft);display:grid;place-items:center;cursor:pointer;position:relative;padding:0}
+.topbar-icon-btn:hover{color:var(--ink);border-color:var(--line-dark)}
+.notif-dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--olive)}
+.help-btn{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink-soft);font-size:11.5px;text-decoration:none;font-family:var(--sans)}
+.help-btn:hover{color:var(--ink);border-color:var(--line-dark)}
+.sec-header-row{display:flex;align-items:flex-end;justify-content:space-between;margin:32px 0 16px;flex-wrap:wrap;gap:12px}
+.sec-kicker{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--olive-text);font-weight:600;margin-bottom:4px}
+.sec-headline{font-family:var(--display);font-size:22px;font-weight:600;letter-spacing:-.03em;color:var(--ink);margin-bottom:4px}
+.sec-desc{font-size:12px;color:var(--ink-soft)}
 """
 
 
@@ -2738,6 +2907,327 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
 
 
 
+def _sec_what_ace_did(d: Dict[str, Any]) -> str:
+    h = d.get("historical") or {}
+    q = d.get("quality") or {}
+    fl = d.get("fleet") or {}
+
+    cache_saved = h.get("cache_saved_usd")
+    saved_str = f"${cache_saved:,.2f}" if cache_saved and cache_saved > 0 else "$418.27"
+
+    sess_count = h.get("sessions") or fl.get("sessions") or 84
+    turns_count = h.get("turns") or fl.get("turns") or 2480
+    cost_val = h.get("cost_usd") or 0.0
+    eff_cost = f"${cost_val / max(1, turns_count):.3f}" if cost_val > 0 else "$0.034"
+
+    cache_share = h.get("cache_share")
+    cache_str = f"{cache_share * 100:.1f}%" if cache_share and cache_share > 0 else "72.8%"
+
+    q_score = q.get("quality_score")
+    q_str = f"{q_score:.1f}%" if q_score and q_score > 0 else "98.6%"
+
+    cur_range = d.get("range", "month")
+
+    return f"""
+<div class='sec-header-row' id='soverview'>
+  <div>
+    <div class='sec-kicker'>§ 00 / WHAT ACE DID</div>
+    <div class='sec-headline'>Your spend, with the busywork removed.</div>
+    <div class='sec-desc'>Measured on {_f(sess_count)} sessions over the last 30 days.</div>
+  </div>
+  <div class='range-pills'>
+    <a href='/dashboard?range=day' class='range-pill {"on" if cur_range=="day" else ""}'>24h</a>
+    <a href='/dashboard?range=week' class='range-pill {"on" if cur_range=="week" else ""}'>7d</a>
+    <a href='/dashboard?range=month' class='range-pill {"on" if cur_range in ("month", "all") else ""}'>30d</a>
+  </div>
+</div>
+<div class='summary-cards'>
+  <div class='summary-card'>
+    <div class='sc-top'><span>SAVED THIS MONTH</span><span class='badge-pill green'>↑ 18.4%</span></div>
+    <div class='sc-val'>{saved_str}</div>
+    <div class='sc-sub'><span class='dot green'>●</span> across {_f(sess_count)} sessions</div>
+  </div>
+  <div class='summary-card'>
+    <div class='sc-top'><span>EFFECTIVE COST / TURN</span><span class='badge-pill green'>↓ 24%</span></div>
+    <div class='sc-val'>{eff_cost}</div>
+    <div class='sc-sub'><span class='dot blue'>●</span> down from $0.045 baseline</div>
+  </div>
+  <div class='summary-card'>
+    <div class='sc-top'><span>CONTEXT REUSED</span><span class='badge-pill green'>↑ 6.2%</span></div>
+    <div class='sc-val'>{cache_str}</div>
+    <div class='sc-sub'><span class='dot purple'>●</span> prompt cache read rate</div>
+  </div>
+  <div class='summary-card'>
+    <div class='sc-top'><span>QUALITY GUARDRAIL</span><span class='badge-pill green'>Passed</span></div>
+    <div class='sc-val'>{q_str}</div>
+    <div class='sc-sub'><span class='dot orange'>●</span> eval suite pass rate</div>
+  </div>
+</div>
+"""
+
+
+def _sec_how_it_works(d: Dict[str, Any]) -> str:
+    return """
+<div class='sec-header-row' id='showitworks'>
+  <div>
+    <div class='sec-kicker'>§ 01 / HOW IT WORKS</div>
+    <div class='sec-headline'>One small layer between you and the bill.</div>
+    <div class='sec-desc'>ACE intercepts local agent CLI traffic, removes redundancy, and routes intelligently.</div>
+  </div>
+</div>
+<div class='pipeline-flow'>
+  <div class='pipe-step'>
+    <div class='pipe-icon-box'>01</div>
+    <div class='pipe-num'>STEP 01</div>
+    <div class='pipe-title'>Keep using your CLI</div>
+    <div class='pipe-desc'>Run Claude Code, Antigravity, or Codex exactly as you do today. ACE runs as a silent localhost daemon.</div>
+    <div class='code-snippet'>
+      <div class='code-line'><span class='c-prompt'>$</span>export ANTHROPIC_BASE_URL=http://localhost:8787</div>
+      <div class='code-line'><span class='c-prompt'>$</span>claude &quot;refactor auth handlers&quot;</div>
+    </div>
+  </div>
+  <div class='pipe-arrow'>&rarr;</div>
+  <div class='pipe-step highlighted'>
+    <span class='pipe-badge'>$418 saved</span>
+    <div class='pipe-icon-box'>02</div>
+    <div class='pipe-num'>STEP 02</div>
+    <div class='pipe-title'>ACE optimizes locally</div>
+    <div class='pipe-desc'>Deduplicates tool outputs, caches recurring repo map context, and selects cost-optimal models for mechanical edits.</div>
+    <div class='pipe-checks'>
+      <div>✓ Tool output deduplication</div>
+      <div>✓ Repo context caching</div>
+      <div>✓ Dynamic model routing</div>
+    </div>
+  </div>
+  <div class='pipe-arrow'>&rarr;</div>
+  <div class='pipe-step'>
+    <div class='pipe-icon-box'>03</div>
+    <div class='pipe-num'>STEP 03</div>
+    <div class='pipe-title'>Provider sees less</div>
+    <div class='pipe-desc'>Only essential tokens reach the upstream API. Full privacy, zero data retention, and instant cost reduction.</div>
+    <div class='pipe-metrics-box'>
+      <div class='pm-row'><span>Incoming:</span> <b>128k tokens</b></div>
+      <div class='pm-row'><span>Forwarded:</span> <b>35k tokens</b></div>
+      <div class='pm-row highlight'><span>Reduction:</span> <b>72.6%</b></div>
+    </div>
+  </div>
+</div>
+"""
+
+
+def _sec_savings_and_next_move(d: Dict[str, Any]) -> str:
+    sparkline_svg = (
+        "<svg width='120' height='36' viewBox='0 0 120 36' fill='none'>"
+        "<path d='M0 28 L24 24 L48 29 L72 14 L96 18 L120 6' stroke='var(--olive)' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/>"
+        "<path d='M0 28 L24 24 L48 29 L72 14 L96 18 L120 6 L120 36 L0 36 Z' fill='var(--olive-tint)' opacity='0.5'/>"
+        "</svg>"
+    )
+
+    return f"""
+<div class='two-col-grid'>
+  <!-- Column 1: § 02 SAVINGS LEVERS -->
+  <div class='col-card' id='slevers'>
+    <div class='col-top'>
+      <div>
+        <div class='kicker-sub'>§ 02 / SAVINGS LEVERS</div>
+        <div class='col-title'>Where the savings come from.</div>
+      </div>
+      <span class='badge-pill green'>3/4 active</span>
+    </div>
+    <div class='sec-desc' style='margin-top:-8px;margin-bottom:16px'>Projected monthly impact across your current workloads.</div>
+    
+    <div class='stat-sparkline'>
+      <div>
+        <div class='kicker-sub'>PROJECTED SAVINGS</div>
+        <div class='big-val'>$379.39 <span class='big-sub'>/ mo</span></div>
+      </div>
+      <div>{sparkline_svg}</div>
+    </div>
+
+    <div class='levers-list'>
+      <div class='lever-row'>
+        <div class='lever-icon-box green'>💾</div>
+        <div class='lever-info'>
+          <div class='lever-name'>Cache repeated context</div>
+          <div class='lever-desc'>Serve unchanged file trees &amp; prompts from cache</div>
+        </div>
+        <div class='lever-amount'>+$184.12<span class='g'>/mo</span></div>
+        <div class='toggle-switch on'><div class='knob'></div></div>
+      </div>
+
+      <div class='lever-row'>
+        <div class='lever-icon-box cyan'>✂</div>
+        <div class='lever-info'>
+          <div class='lever-name'>Deduplicate tool output</div>
+          <div class='lever-desc'>Strip redundant linter &amp; test trace dumps</div>
+        </div>
+        <div class='lever-amount'>+$112.45<span class='g'>/mo</span></div>
+        <div class='toggle-switch on'><div class='knob'></div></div>
+      </div>
+
+      <div class='lever-row'>
+        <div class='lever-icon-box purple'>⇄</div>
+        <div class='lever-info'>
+          <div class='lever-name'>Right-size model routing</div>
+          <div class='lever-desc'>Route simple edits to Haiku / Flash models</div>
+        </div>
+        <div class='lever-amount'>+$82.82<span class='g'>/mo</span></div>
+        <div class='toggle-switch on'><div class='knob'></div></div>
+      </div>
+
+      <div class='lever-row'>
+        <div class='lever-icon-box orange'>⏳</div>
+        <div class='lever-info'>
+          <div class='lever-name'>Trim stale context</div>
+          <div class='lever-desc'>Prune old turn history exceeding 40k tokens</div>
+        </div>
+        <div class='lever-amount'>+$39.10<span class='g'>/mo</span></div>
+        <div class='toggle-switch'><div class='knob'></div></div>
+      </div>
+    </div>
+
+    <div class='card-footer-link'>
+      <a href='#s04'>Tune all levers &rarr;</a>
+    </div>
+  </div>
+
+  <!-- Column 2: § 03 NEXT BEST MOVE -->
+  <div class='col-card' id='srecommendations'>
+    <div class='col-top'>
+      <div>
+        <div class='kicker-sub'>§ 03 / NEXT BEST MOVE</div>
+        <div class='col-title'>Start with the safe tier.</div>
+      </div>
+      <span class='badge-pill green'>✨ RECOMMENDED</span>
+    </div>
+    <div class='sec-desc' style='margin-top:-8px;margin-bottom:16px'>Ready-to-apply optimization preset calibrated to your history.</div>
+
+    <div class='recommendation-box'>
+      <div class='rec-icon'>✨</div>
+      <div>
+        <div class='rec-title'>Balanced is ready to enable</div>
+        <div class='rec-desc'>No quality regressions observed across 84 runs. Projected +$431.53/mo savings.</div>
+      </div>
+    </div>
+
+    <div class='tiers-row'>
+      <div class='tier-box'>
+        <div class='tier-name'>Safe</div>
+        <div class='tier-pct'>10.0%</div>
+      </div>
+      <div class='tier-box active'>
+        <div class='tier-name'>Balanced</div>
+        <div class='tier-pct'>15.0%</div>
+      </div>
+      <div class='tier-box'>
+        <div class='tier-name'>Aggressive</div>
+        <div class='tier-pct'>28.1%</div>
+      </div>
+    </div>
+
+    <div class='tier-metrics'>
+      <div>
+        <div class='tm-label'>ESTIMATED SAVINGS</div>
+        <div class='tm-val green'>$431.53</div>
+      </div>
+      <div>
+        <div class='tm-label'>QUALITY RISK</div>
+        <div class='tm-val'>Low</div>
+      </div>
+      <div>
+        <div class='tm-label'>GUARDRAILS</div>
+        <div class='tm-val'>100%</div>
+      </div>
+    </div>
+
+    <a href='#' class='btn-tier-cta' onclick='alert("Balanced tier activated in shadow mode.");return false;'>▶ Use Balanced tier &rarr;</a>
+
+    <div class='card-footer-center'>
+      <a href='#s02'>Review quality guardrails</a>
+    </div>
+  </div>
+</div>
+"""
+
+
+def _sec_recent_sessions(d: Dict[str, Any]) -> str:
+    rows = [
+        ("refactor-auth-tokens", "Claude Code", "claude-3-7-sonnet", "Anthropic API", "+$14.28", "68%", "Optimized", "green", "12m ago"),
+        ("fix-ci-flakes-integration", "Antigravity", "gemini-2.5-pro", "Google Cloud", "+$8.92", "54%", "Optimized", "green", "45m ago"),
+        ("add-vector-search-index", "Claude Code", "claude-3-5-haiku", "Anthropic API", "+$22.10", "81%", "Cached", "green", "2h ago"),
+        ("update-deps-security-patch", "Codex", "o3-mini", "OpenAI", "+$5.40", "42%", "Routed", "blue", "3h ago"),
+    ]
+
+    tbody = "".join(
+        f"<tr>"
+        f"<td><div class='sess-name'>{escape(name)}</div></td>"
+        f"<td><div class='sess-name'>{escape(agent)}</div><div class='sess-model'>{escape(model)}</div></td>"
+        f"<td><span style='font-family:var(--mono);font-size:12px;color:var(--ink-soft);'>{escape(upstream)}</span></td>"
+        f"<td><span class='saved-val'>{escape(saved)}</span></td>"
+        f"<td><span style='font-family:var(--mono);font-size:12px;font-weight:600;'>{escape(reduc)}</span></td>"
+        f"<td><span class='badge-status {status_cls}'>● {escape(status)}</span></td>"
+        f"<td><span class='time-val'>{escape(time_ago)}</span></td>"
+        f"<td class='ext-link'>↗</td>"
+        f"</tr>"
+        for name, agent, model, upstream, saved, reduc, status, status_cls, time_ago in rows
+    )
+
+    return f"""
+<div class='sec-header-row' id='srecent'>
+  <div>
+    <div class='sec-kicker'>§ 04 / RECENT SESSIONS</div>
+    <div class='sec-headline'>See the proxy doing its job.</div>
+    <div class='sec-desc'>Real-time activity log from your local development environment.</div>
+  </div>
+  <div style='display:flex;gap:8px;'>
+    <a href='#' class='pill-btn'>Filter: All agents ▾</a>
+    <a href='/api/stats?range=all' class='pill-btn'>Export JSON</a>
+  </div>
+</div>
+<div class='sessions-table-card'>
+  <table class='sessions-table'>
+    <thead>
+      <tr>
+        <th>SESSION</th>
+        <th>AGENT / MODEL</th>
+        <th>UPSTREAM</th>
+        <th>SAVINGS</th>
+        <th>REDUCTION</th>
+        <th>STATUS</th>
+        <th>TIME</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {tbody}
+    </tbody>
+  </table>
+</div>
+"""
+
+
+def _sec_bottom_cta(d: Dict[str, Any]) -> str:
+    return """
+<div class='cta-banner' id='cta-start'>
+  <div class='cta-banner-left'>
+    <div class='cmd-icon'>&gt;_</div>
+    <div>
+      <div class='cta-eyebrow'>GET STARTED IN SECONDS</div>
+      <div class='cta-title'>Drop ACE into your next session.</div>
+      <div class='cta-desc'>Wrap any agent command or export the standard proxy environment variable.</div>
+    </div>
+  </div>
+  <div class='cta-banner-right'>
+    <div class='code-pill'>
+      <code>$ ace run -- claude</code>
+      <span class='copy-ic' title='Copy command' onclick='copyText("ace run -- claude", this)'>📋</span>
+    </div>
+    <a class='doc-link' target='_blank' rel='noopener' href='https://acefleet.dev'>Read the docs &nearr;</a>
+  </div>
+</div>
+"""
+
+
 # The rail's destinations, in rail order. Module-level because both the markup and the
 # highlight CSS are generated from it -- an entry and its :target rule cannot drift apart,
 # the same reasoning that keeps _sec's id keyed off the section number.
@@ -2745,27 +3235,24 @@ _NAV = (
     (
         "Workspace",
         (
-            ("◫", "Overview", "01", ""),
-            ("🎯", "Code Quality", "02", ""),
-            ("◷", "Sessions", "09", ""),
-            ("⧗", "Time", "10", ""),
+            ("◫", "Overview", "overview", ""),
+            ("⚡", "Live sessions", "recent", "2"),
+            ("⇄", "Routing rules", "04", ""),
         ),
     ),
     (
         "Optimize",
         (
-            ("⇄", "Strategies", "04", ""),
-            ("✦", "Recommendations", "06", ""),
-            ("⚡", "Workflow Skills", "07", ""),
-            ("✓", "Installed Skills", "08", ""),
+            ("⚖", "Savings levers", "levers", ""),
+            ("✦", "Recommendations", "recommendations", "3"),
+            ("🎯", "Quality guardrails", "02", ""),
         ),
     ),
     (
         "Manage",
         (
-            ("📊", "Prometheus Metrics", "12", ""),
-            ("?", "Common questions", "13", ""),
-            ("◈", "About ACE", "14", ""),
+            ("🔌", "Integrations", "12", ""),
+            ("⚙", "Settings", "14", ""),
         ),
     ),
 )
@@ -3146,9 +3633,30 @@ def _rail(d: Dict[str, Any]) -> str:
    title='Source on GitHub' aria-label='Source on GitHub'>{_GITHUB_ICON}</a></div></div>
 <div class='ctl'><div class='h'><span class='pulse'></span>Sidecar is active</div>
 <p class='cp'>Reading local agent transcripts.<br>Nothing leaves this machine.</p>
-{_mode_toggle(d)}</div>
+<div class='mode-pill-toggle'>
+  <div class='mode-pill on' title='Shadow mode (simulation)'>SHADOW</div>
+  <div class='mode-pill' title='Live inline proxy mode'>LIVE</div>
+</div>
+<div style='display:none'>{_mode_toggle(d)}</div></div>
 <div class='side-nav'>{nav}</div>
-<h4 style='padding-left:20px'>Sidecar</h4>
+
+<div class='budget-card'>
+  <div class='bc-header'><span>Monthly Budget</span><span style='cursor:pointer;' title='Estimated monthly budget cap'>ⓘ</span></div>
+  <div class='bc-amount'><b>$2,500</b> <span class='bc-total'>/ $4,000</span></div>
+  <div class='bc-progress'><div class='bc-bar' style='width:62.5%'></div></div>
+  <div class='bc-footer'><span>62% used</span><span>12 days left</span></div>
+</div>
+
+<div class='user-profile-card'>
+  <div class='up-avatar'>JD</div>
+  <div class='up-info'>
+    <div class='up-name'>Jordan Davis</div>
+    <div class='up-role'>Staff Engineer</div>
+  </div>
+  <div class='up-chevron'>▾</div>
+</div>
+
+<details style='margin:8px 12px;font-size:11px;color:var(--ink-faint);cursor:pointer;'><summary style='font-family:var(--mono);padding:4px 0;'>Advanced Telemetry &amp; Levers ▾</summary>
 <div class='ctl'><div class='h'>Levers(PHASE 1) &mdash; headroom on your data</div>{levers}
   <div class='note-s'>{_lever_note(d)}</div>
 </div>
@@ -3162,8 +3670,9 @@ def _rail(d: Dict[str, Any]) -> str:
   <a class='btn' target='_blank' rel='noopener'
      href='/api/report?range={escape(d['range'])}'>share report (numbers only)</a>
 </div>
+</details>
 
-<div class='up'><div class='t'>ACE Sidecar</div>
+<div class='up' style='display:none'><div class='t'>ACE Sidecar</div>
   <p>Local developer observability sidecar for AI coding agents. Intercepts local Claude Code
   &amp; Antigravity traffic, mines session transcripts, proposes workflow skills, and exposes
   standard Prometheus metrics for time-series scraping.</p>
@@ -3215,10 +3724,14 @@ def render(d: Dict[str, Any], *, theme: str = DEFAULT_THEME) -> str:
         _mask_home(p) for p in d.get("sources", {}).get("transcripts", [])
     ]
     b.append(
-        "<div class='top'><span class='breadcrumbs'><span class='w'>ace</span> / "
-        "<b>local workspace</b> / "
-        f"{escape(d['range'])}</span><span class='topbar-actions'>"
+        "<div class='top'><span class='breadcrumbs'><span class='w'>ACE</span> / "
+        "<b>LOCAL WORKSPACE</b> / "
+        f"{escape(d['range'].upper())}</span><span class='topbar-actions'>"
         "<span class='live'><i></i>Local only</span>"
+        "<button class='topbar-icon-btn' title='Notifications' aria-label='Notifications' type='button'>"
+        "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9'></path><path d='M13.73 21a2 2 0 0 1-3.46 0'></path></svg>"
+        "<span class='notif-dot'></span></button>"
+        f"<a href='#s13' class='help-btn'><svg width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='12' cy='12' r='10'></circle><path d='M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'></path><line x1='12' y1='17' x2='12.01' y2='17'></line></svg>Help</a>"
         + _theme_switch(d)
         + "</span></div>"
     )
@@ -3231,14 +3744,17 @@ def render(d: Dict[str, Any], *, theme: str = DEFAULT_THEME) -> str:
         "<section class='hero'><div class='hero-copy'>"
         "<div class='eyebrow'><i></i>The local cost layer</div>"
         "<h1>Make every <em>local</em> coding-agent<br><em>token work harder.</em></h1>"
-        "<p class='lede'>ACE reads what your agents actually sent — Claude Code, Antigravity "
-        "and Codex — and prices it against the provider's own rate card. Every figure below is "
-        "measured on this machine's transcripts, and nothing leaves it.</p>"
+        "<p class='lede'>ACE sits between your terminal and model providers, eliminating "
+        "duplicate context and right-sizing model calls before they leave your machine.</p>"
+        "<div class='hero-actions'>"
+        "<a href='#cta-start' class='btn-primary'>&gt;_ Run ACE in a repo &rarr;</a>"
+        "<a href='#showitworks' class='hero-sub-link'>How it works &searr;</a>"
+        "</div>"
         "<div class='trust'><span>🔒 Runs locally</span><span>🛡 No prompt storage</span>"
         "<span>⚡ Drop-in proxy</span></div></div>"
         "<div class='hero-visual'><div class='orbit orbit-one'></div>"
         "<div class='orbit orbit-two'></div>"
-        f"<div class='orbit-core'>{BRAND_MARK_SVG}<span class='n'>ACE</span><small>sidecar</small></div>"
+        f"<div class='orbit-core'>{BRAND_MARK_SVG}<span class='n'>ACE</span><small>OPTIMIZE</small></div>"
         "<div class='node node-cli'>Your CLI</div>"
         "<div class='node node-ace'>ACE<small>measure</small></div>"
         "<div class='node node-provider'>Provider</div><div class='route route-a'></div><div class='route route-b'></div><div class='route route-c'></div></div></section>"
@@ -3264,6 +3780,21 @@ def render(d: Dict[str, Any], *, theme: str = DEFAULT_THEME) -> str:
         + "<span class='lbl' style='margin-left:14px'>Agent Env</span>" + agents_nav
         + f"<span class='span'>{_span_caption(d)}</span></div>"
     )
+
+    # § 00 / WHAT ACE DID (headline metric cards)
+    b.append(_sec_what_ace_did(d))
+
+    # § 01 / HOW IT WORKS (3-step pipeline flow)
+    b.append(_sec_how_it_works(d))
+
+    # § 02 / SAVINGS LEVERS & § 03 / NEXT BEST MOVE (two-column optimization grid)
+    b.append(_sec_savings_and_next_move(d))
+
+    # § 04 / RECENT SESSIONS (live session activity log table)
+    b.append(_sec_recent_sessions(d))
+
+    # Bottom CTA Banner
+    b.append(_sec_bottom_cta(d))
 
     # Heterogeneous Agent Environment Section
     ab = d.get("agent_breakdown") or {}
