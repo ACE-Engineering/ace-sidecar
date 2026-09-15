@@ -319,7 +319,9 @@ def test_dashboard_and_api_with_codex(tmp_path, mock_codex_sessions, monkeypatch
     # 1. HTML Dashboard
     resp = client.get("/dashboard?agent=codex")
     assert resp.status_code == 200
-    assert "Heterogeneous Coding Agent Observability" in resp.text
+    # Keyed on the document title, not on hero copy: the headline is design surface
+    # and gets rewritten, while the title is what identifies the page.
+    assert "ACE — Local Coding Dashboard" in resp.text
     assert "Codex" in resp.text
 
     # 2. JSON API report

@@ -155,7 +155,9 @@ def test_dashboard_api_with_agent_filter(mock_antigravity_brain):
     # Test /dashboard rendering
     dash_resp = client.get("/dashboard")
     assert dash_resp.status_code == 200
-    assert "Heterogeneous Coding Agent Observability" in dash_resp.text
+    # Keyed on the document title, not on hero copy: the headline is design surface
+    # and gets rewritten, while the title is what identifies the page.
+    assert "ACE — Local Coding Dashboard" in dash_resp.text
     assert "Antigravity (Google)" in dash_resp.text
 
 

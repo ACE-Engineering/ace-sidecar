@@ -28,93 +28,453 @@ from ace.sidecar.insights import (
 )
 
 try:
-    from ace.branding import FAVICON_LINK
-except ImportError:
-    FAVICON_LINK = '<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">'
+    from ace.branding import BRAND_MARK_SVG, favicon_link
+except ImportError:  # pragma: no cover - branding is vendored, absence means a broken install
+    BRAND_MARK_SVG = ""
+
+    def favicon_link(theme: str = "auto") -> str:
+        return ""
 
 
 REFRESH_SECONDS = 20
 
+#: Theme states. ``auto`` is the default and emits no attribute at all, leaving
+#: ``prefers-color-scheme`` to decide — which is why it is a state rather than the absence of
+#: one. A two-way switch cannot express it, and pinning either value silently opts a
+#: developer out of their own system setting when it changes at sunset.
+THEMES = ("auto", "light", "dark")
+DEFAULT_THEME = "auto"
+
+
+def resolve_theme(value: "str | None") -> str:
+    """Narrow anything — a query param, a cookie, ``None`` — to one of :data:`THEMES`."""
+    return value if value in THEMES else DEFAULT_THEME
+
+
 _CSS = """
-/* Two families, as the control plane uses them:
-   SANS  — headings, prose, nav, descriptions (read)
-   MONO  — section markers, stat labels, numbers, paths, table data (scanned)
-   All-mono reads as a terminal dump, not a dashboard. */
-:root{--paper:#0A0B0C;--rail:#08090A;--surface:#101314;--surface-2:#0C0E10;--ink:#F2F4F3;
---ink-2:#A6ADAA;--ink-3:#6C7572;--ink-4:#4A5250;--line:#212627;--line-2:#2E3436;
---mint:#3ECF8E;--accent-2:#5FE3A1;--blue:#3987e5;--gold:#D8A33C;--crit:#E05D45;
---good-bg:#0F231A;--warn-bg:#241D0E;
---mono:ui-monospace,'SF Mono','Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
---sans:system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+/* Space Grotesk / DM Sans / DM Mono, served from LOOPBACK. The overhaul prototype pulls them
+   from Google's font CDN with an `@import`; this cannot. The sidecar's claim is that nothing
+   leaves the machine, and a font stylesheet would make every dashboard load an outbound
+   request that reports, by its timing alone, when a developer was working. The bytes ship in
+   the package — see `static/fonts/README.md`.
+
+   The CDN hostnames are deliberately not spelled out anywhere in this file; a test greps the
+   rendered page for them, and that guard is only worth having while the sole way either
+   string can appear is somebody adding a real link.
+
+   Two of the four are variable fonts, so the weight RANGE form is a requirement rather than a
+   flourish: a single `font-weight` would make the browser synthesise the others, and Space
+   Grotesk's 600 is load-bearing in this design. */
+@font-face{font-family:'Space Grotesk';src:url('/static/fonts/SpaceGrotesk-var.woff2') format('woff2');
+font-weight:400 700;font-style:normal;font-display:swap}
+@font-face{font-family:'DM Sans';src:url('/static/fonts/DMSans-var.woff2') format('woff2');
+font-weight:400 600;font-style:normal;font-display:swap}
+@font-face{font-family:'DM Mono';src:url('/static/fonts/DMMono-400.woff2') format('woff2');
+font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'DM Mono';src:url('/static/fonts/DMMono-500.woff2') format('woff2');
+font-weight:500;font-style:normal;font-display:swap}
+
+/* ACE sidecar dashboard — the overhaul design.
+   Ported from the React prototype at `ace-sidecar-overhaul/client/src/index.css`, which is a
+   warm olive-on-paper system: light-first, 4px radius, soft shadows, and three muted signal
+   hues (olive / aqua / violet) in place of the earlier dark-studio palette.
+
+   Three deliberate departures from the prototype, each recorded because a reader comparing
+   the two will otherwise read them as drift:
+
+   1. SMALL TEXT IS DARKER. The prototype is a visual mock and was not contrast-audited; on
+      `#f4f3ed` its section kicker is 3.45:1, its metric note 2.96:1, its table header 2.27:1.
+      This dashboard exists to have numbers read off it, so every value used for small text is
+      walked down in lightness — hue and saturation held constant — until it clears 4.5:1 on
+      all three light surfaces. Fills, large display type and borders keep the prototype's
+      exact values, where 3:1 is the applicable bar and the design's feel actually lives.
+
+   2. THERE IS A DARK THEME. The prototype ships light only, but its own topbar draws an
+      AUTO / LIGHT / DARK switch, so the design anticipates one.
+
+      Its SURFACES ARE NEUTRAL CHARCOAL, not tinted. The first attempt carried the olive into
+      the ground itself, and every surface came out with a green channel above its red, so the
+      whole page read as olive rather than as dark. (The retired values are deliberately not
+      quoted here: a test greps the rendered page for off-palette colours, and a comment naming
+      them is indistinguishable from the bug returning.) The olive
+      belongs in the accent, which is the only place it can be seen as a colour rather than
+      as a cast over everything. Surfaces are now R>=G>B by a point or two: warm enough not to
+      look blue beside the light theme's paper, never green. If you are tempted to warm these
+      up again, check the channels before you do.
+
+   3. NO FABRICATED CHROME. The prototype's sidebar carries a named user, an avatar, a
+      monthly budget with a progress bar, and a notification bell. The sidecar has no
+      accounts, no budget and nothing to notify; those panels are dropped rather than filled
+      with invented numbers on a page whose entire claim is that every figure is measured.
+      What replaced them is real: the live skill-mode switch and the lever headroom. */
+
+:root{
+/* -- the prototype's own primitives -- */
+--paper:#f4f3ed;--paper-deep:#ebeae1;--card:#fbfaf5;--rail:#eaeae0;--elevated:#ffffff;
+--ink:#1f211c;--ink-soft:#5d6258;
+--line:#deded2;--line-dark:#cbcdbb;
+--olive:#a9ba53;--olive-light:#e7edbd;--olive-tint:#edf2d2;--primary:#819538;
+--radius:4px;
+--shadow:0 15px 45px rgba(62,69,41,.07);--shadow-sm:0 5px 16px rgba(91,99,70,.06);
+--ease:cubic-bezier(.23,1,.32,1);--dur-fast:160ms;--dur:240ms;
+/* -- contrast-corrected text values (see note 1) -- */
+--ink-faint:#676B60;--olive-text:#626F2B;--aqua:#426F74;--violet:#6D58BD;--orange:#8E5F29;
+--crit:#9E2B2B;
+/* -- fills keep the prototype's exact hues -- */
+--aqua-fill:#77acb1;--violet-fill:#9b8dd2;--orange-fill:#d29e64;
+--aqua-tint:#e9f1ef;--violet-tint:#f0edf8;--orange-tint:#f8eee1;
+--on-olive:#fbfaf5;
+color-scheme:light}
+
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+--paper:#131312;--paper-deep:#0E0E0D;--card:#1A1A18;--rail:#0F0F0E;--elevated:#222220;
+--ink:#EDEDE8;--ink-soft:#A8A8A0;--ink-faint:#8A8A82;
+--line:#262624;--line-dark:#393936;
+--olive:#BFD45F;--olive-light:#39401F;--olive-tint:#232519;--primary:#A8BE4E;
+--olive-text:#BFD45F;--aqua:#8CC4CA;--violet:#B0A2E0;--orange:#DCA86A;--crit:#F08A8A;
+--aqua-fill:#8CC4CA;--violet-fill:#B0A2E0;--orange-fill:#DCA86A;
+--aqua-tint:#16261F;--violet-tint:#1E1A2C;--orange-tint:#2A2015;
+--on-olive:#131312;
+--shadow:0 15px 45px rgba(0,0,0,.34);--shadow-sm:0 5px 16px rgba(0,0,0,.28);
+color-scheme:dark}}
+
+:root[data-theme="dark"]{
+--paper:#131312;--paper-deep:#0E0E0D;--card:#1A1A18;--rail:#0F0F0E;--elevated:#222220;
+--ink:#EDEDE8;--ink-soft:#A8A8A0;--ink-faint:#8A8A82;
+--line:#262624;--line-dark:#393936;
+--olive:#BFD45F;--olive-light:#39401F;--olive-tint:#232519;--primary:#A8BE4E;
+--olive-text:#BFD45F;--aqua:#8CC4CA;--violet:#B0A2E0;--orange:#DCA86A;--crit:#F08A8A;
+--aqua-fill:#8CC4CA;--violet-fill:#B0A2E0;--orange-fill:#DCA86A;
+--aqua-tint:#16261F;--violet-tint:#1E1A2C;--orange-tint:#2A2015;
+--on-olive:#131312;
+--shadow:0 15px 45px rgba(0,0,0,.34);--shadow-sm:0 5px 16px rgba(0,0,0,.28);
+color-scheme:dark}
+
+/* -- aliases --
+   The 14 data sections address colours by the names they were written with. Re-pointing the
+   names costs one block here; renaming them would be a three-thousand-line diff nobody could
+   review against the design. Each alias keeps the MEANING the old name had. */
+:root,:root[data-theme="dark"]{
+--surface:var(--elevated);--surface-2:var(--card);
+--ink-2:var(--ink-soft);--ink-3:var(--ink-faint);--ink-4:var(--ink-faint);
+--line-2:var(--line-dark);--hover:var(--paper-deep);
+--mint:var(--olive-text);--mint-fill:var(--olive);--on-mint:var(--on-olive);
+--accent-2:var(--violet);--blue:var(--aqua);--gold:var(--orange);
+--mint-line:var(--olive);--mint-bg:var(--olive-tint);
+--gold-line:var(--orange-fill);--blue-line:var(--aqua-fill);
+--good-bg:var(--olive-tint);--warn-bg:var(--orange-tint);
+--af-signal-lime:var(--olive);--af-signal-cyan:var(--aqua);--af-signal-violet:var(--violet);
+--af-signal-amber:var(--orange);--af-status-error:var(--crit);--af-status-off:var(--ink-faint);
+--af-paper-100:var(--ink);--af-paper-80:var(--ink-soft);--af-paper-55:var(--ink-faint);
+--af-paper-32:var(--ink-faint);
+--af-ink-900:var(--paper);--af-ink-850:var(--card);--af-ink-800:var(--elevated);
+--af-ink-950:var(--rail);--af-shadow-studio:var(--shadow);
+--af-line-dark:var(--line-dark);--af-line-dark-soft:var(--line);
+--af-dur-fast:var(--dur-fast);--af-dur-base:var(--dur);--af-ease-out:var(--ease);
+--display:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;
+--mono:'DM Mono',ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
+--sans:'DM Sans',ui-sans-serif,system-ui,-apple-system,sans-serif}
+
 *{box-sizing:border-box}
+html{scroll-behavior:smooth}
 body{margin:0;background:var(--paper);color:var(--ink);display:flex;min-height:100vh;
 font:14px/1.55 var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 a{color:inherit;text-decoration:none}
 code{font-family:var(--mono);font-size:.92em}
+h1,h2,h3{margin:0;font-family:var(--display);letter-spacing:-.045em}
+:focus-visible{outline:2px solid var(--olive-text);outline-offset:3px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{
+animation-duration:1ms!important;animation-iteration-count:1!important;
+transition-duration:1ms!important;scroll-behavior:auto!important}}
 
-/* ---- left rail ---- */
-.rail{width:250px;flex:0 0 250px;background:var(--rail);border-right:1px solid var(--line);
-padding:20px 0 32px;position:sticky;top:0;height:100vh;overflow-y:auto}
-/* Mark form matches the shipped one (dashboards/cfo.html .brandmark, ace.branding
-   FAVICON_SVG, ace-fleet public/favicon.svg):
-     - corners SQUARE (border-radius:0);
-     - border 1.5px #5b6169 — brighter and thicker than var(--line-2);
-     - wordmark MONO 700 at .01em, essentially untracked. Wide tracking (.16em+) turns the
-       logo into a status label.
-   Size is NOT cfo.html's 30px, which is a masthead size set against a wordmark carrying a
-   descriptor on the same line. 22px with a 10px core keeps the shipped ratio (10/22 vs
-   14/30) at a weight the two-line rail lockup can hold. One mark per page — the rail
-   already says ACE, so no second copy in the breadcrumb. */
-.mark{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:0;
-border:1.5px solid #5b6169;background:transparent;flex:none}
-.mark::after{content:"";width:10px;height:10px;background:var(--mint)}
-.brand{padding:0 18px 18px}
-.brand .r{display:flex;align-items:center;gap:.6rem}
-/* The mark and wordmark lead; the repo link is an afterthought at the far end of the same
-   row, so the lockup still reads as one unit rather than two competing marks. Muted to
-   --ink-4 -- the weight of the "local sidecar" descriptor under it -- and resolving to full
-   ink only on hover: it is a way out of the page, not a thing to look at. */
-.brand .r .gh{margin-left:auto;display:grid;place-items:center;width:22px;height:22px;
-color:var(--ink-4);flex:none}
-.brand .r .gh:hover{color:var(--ink)}
-.brand .r .gh svg{width:15px;height:15px;display:block;fill:currentColor}
-.brand .n{font-family:var(--mono);color:var(--ink);font-size:.92rem;letter-spacing:.01em;
-font-weight:700}
-.brand .s{color:var(--ink-4);font-size:11.5px;margin-top:9px}
-.rail h4{font-family:var(--mono);color:var(--ink-4);font-size:9.5px;text-transform:uppercase;
-letter-spacing:.15em;margin:20px 0 7px;padding:0 18px;font-weight:400}
-.rail .item{display:flex;align-items:center;gap:10px;padding:7px 18px;color:var(--ink-2);
-font-size:13.5px}
-.rail .item:hover{background:#141718;color:var(--ink)}
-/* `.on` is only the *initial* highlight, before any click. After that :target decides, via
-   the generated block appended to this stylesheet (see _nav_css). */
-.rail .item.on{background:#141718;color:var(--ink);box-shadow:inset 2px 0 0 var(--mint)}
-.rail .ic{width:14px;text-align:center;opacity:.7;font-size:12px}
+/* ---- sidebar ---- */
+.rail{width:250px;flex:0 0 250px;background:var(--rail);border-right:1px solid var(--line-dark);
+display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{height:78px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;
+border-bottom:1px solid var(--line);flex:none}
+.brand .r{display:flex;align-items:center;gap:10px;width:100%}
+.mark{display:inline-grid;place-items:center;width:22px;height:22px;flex:none}
+.mark svg{display:block;width:22px;height:22px}
+.brand .n{font-family:var(--display);font-size:18px;font-weight:700;letter-spacing:-.03em;
+line-height:1;color:var(--ink)}
+.brand .s{color:var(--ink-faint);font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+margin-top:4px;text-transform:uppercase}
+.brand .gh{margin-left:auto;display:grid;place-items:center;width:22px;height:22px;
+color:var(--ink-faint);flex:none;transition:color var(--dur-fast) var(--ease)}
+.brand .gh:hover{color:var(--ink)}
+.brand .gh svg{width:17px;height:17px;display:block;fill:currentColor}
+
+/* The prototype's "sidecar is active" card. Its mode switch is not decoration — it is the
+   page's real skill-mode control, which already had three states here. */
+.ctl{margin:22px 16px 10px;padding:14px 14px 12px;background:var(--card);
+border:1px solid var(--line-dark);box-shadow:var(--shadow-sm);border-radius:var(--radius)}
+.ctl .h{display:flex;align-items:center;gap:7px;color:var(--olive-text);font-family:var(--mono);
+font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:9px}
+.ctl .cp{color:var(--ink-faint);font-size:11px;line-height:1.45;margin:0 0 13px}
+.pulse{width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--olive);
+box-shadow:0 0 0 3px color-mix(in srgb,var(--olive) 16%,transparent);flex:none}
+.rail h4{color:var(--ink-faint);font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+padding:0 10px 8px;text-transform:uppercase;margin:22px 0 0;font-weight:400}
+.side-nav{padding:11px 10px}
+.rail .item{position:relative;display:flex;align-items:center;gap:10px;width:100%;
+color:var(--ink-soft);font-size:12px;padding:9px 10px;border-radius:var(--radius);
+transition:background var(--dur) var(--ease),color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.rail .item:hover{background:var(--card);color:var(--ink);transform:translateX(2px)}
+.rail .item.on{background:var(--card);color:var(--ink);font-weight:600;
+box-shadow:inset 3px 0 0 var(--olive)}
+.rail .ic{width:16px;text-align:center;font-size:12px;opacity:.8;flex:none}
+.nav-badge{margin-left:auto;display:grid;place-items:center;min-width:18px;height:18px;
+border-radius:10px;color:var(--olive-text);background:var(--olive-tint);
+font-family:var(--mono);font-size:10px}
+.rail-foot{margin-top:auto;padding:14px 16px 17px;border-top:1px solid var(--line)}
+
+/* ---- topbar ---- */
+.main{flex:1;min-width:0}
+.top{height:60px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+justify-content:space-between;padding:0 38px;color:var(--ink-faint);font-family:var(--mono);
+font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+.top b{color:var(--ink-soft);font-weight:400}
+.top .w{color:var(--ink);font-weight:500}
+.top .p{text-transform:none;letter-spacing:0;color:var(--ink-faint)}
+.topbar-actions{display:flex;align-items:center;gap:18px}
+.live{display:flex;align-items:center;gap:8px;color:var(--olive-text);border:1px solid var(--olive);
+background:var(--olive-tint);padding:6px 10px;border-radius:20px;font-size:10px;letter-spacing:.07em;
+font-family:var(--mono);text-transform:uppercase;white-space:nowrap}
+.live i{width:5px;height:5px;border-radius:50%;background:var(--olive);display:inline-block;flex:none}
+.live.calc i{background:var(--aqua-fill)}
+.thm{display:inline-flex;align-items:center;border:1px solid var(--line-dark);
+background:var(--card);font-size:10px;font-family:var(--mono);border-radius:var(--radius);
+overflow:hidden}
+.thm a{padding:6px 8px;color:var(--ink-faint);letter-spacing:.06em;text-transform:uppercase;
+transition:color var(--dur-fast) var(--ease)}
+.thm a:hover{color:var(--ink)}
+.thm a.on{color:var(--olive-text);background:var(--olive-tint)}
+
+.wrap{max-width:1520px;padding:41px 38px 32px;margin:0 auto}
+
+/* ---- hero ---- */
+.hero{min-height:340px;display:flex;align-items:center;justify-content:space-between;gap:52px;
+padding:10px 0 34px;border-bottom:1px solid var(--line)}
+.hero-copy{max-width:700px}
+.eyebrow{display:flex;align-items:center;gap:9px;margin-bottom:18px;color:var(--olive-text);
+font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase}
+.eyebrow i{display:inline-block;width:25px;height:1px;background:var(--olive)}
+h1{color:var(--ink);font-size:clamp(30px,3.5vw,50px);font-weight:600;letter-spacing:-.06em;
+line-height:1.04;text-wrap:balance}
+h1 em{color:var(--olive-text);font-style:normal}
+.lede{max-width:595px;color:var(--ink-soft);font-size:15px;line-height:1.65;margin:23px 0 25px}
+.trust{display:flex;align-items:center;gap:17px;color:var(--ink-faint);font-family:var(--mono);
+font-size:10px;margin-top:22px;flex-wrap:wrap}
+.trust span{display:flex;align-items:center;gap:5px}
+.hero-visual{width:355px;height:320px;position:relative;flex:none;margin-right:20px}
+.orbit{position:absolute;border:1px solid var(--line-dark);border-radius:50%;left:50%;top:50%}
+.orbit-one{width:266px;height:147px;transform:translate(-50%,-50%) rotate(-25deg)}
+.orbit-two{width:302px;height:210px;transform:translate(-50%,-50%) rotate(27deg)}
+.orbit-core{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:93px;
+height:93px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+flex-direction:column;background:var(--olive-tint);border:1px solid var(--olive);
+box-shadow:var(--shadow)}
+.route{position:absolute;height:1px;transform-origin:left center;
+background:repeating-linear-gradient(90deg,var(--olive) 0 4px,transparent 4px 8px);opacity:.75}
+.route-a{width:115px;top:126px;left:55px;transform:rotate(19deg)}
+.route-b{width:92px;top:107px;left:227px;transform:rotate(154deg)}
+.route-c{width:112px;top:211px;left:190px;transform:rotate(-21deg)}
+.orbit-core .n{font-family:var(--display);font-size:14px;font-weight:700;letter-spacing:-.04em;
+color:var(--ink)}
+.orbit-core small{color:var(--olive-text);font-family:var(--mono);font-size:10px;
+letter-spacing:.04em;text-transform:uppercase}
+.node{position:absolute;display:flex;align-items:center;gap:6px;padding:7px 9px;
+border:1px solid var(--line-dark);background:var(--card);color:var(--ink-soft);
+font-family:var(--mono);font-size:10px;box-shadow:var(--shadow-sm);border-radius:var(--radius)}
+.node-cli{left:0;top:69px}
+.node-ace{right:-12px;top:34px;color:var(--olive-text);border-color:var(--olive);
+background:var(--olive-tint);flex-direction:column;align-items:flex-start;gap:1px}
+.node-ace small{font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.node-provider{right:1px;bottom:58px}
+
+/* ---- section chrome ----
+   The kicker replaces the old `§ NN /` marker. Same job — say which section you are in and
+   let a reader cite it — in the prototype's `$ NN / NAME` form. */
+.sec{color:var(--olive-text);font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+text-transform:uppercase;margin:0;scroll-margin-top:18px}
+.section-block{padding:48px 0 8px}
+.section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:26px;
+margin-bottom:20px}
+.hd{color:var(--ink);font-family:var(--display);font-size:23px;font-weight:600;
+letter-spacing:-.045em;margin:8px 0 7px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hd .g{color:var(--ink-faint);font-weight:400}
+.section-heading p,.lede-sm{max-width:590px;color:var(--ink-soft);font-size:12px;line-height:1.55;margin:0}
+
+/* ---- metric tiles (§ 01) ---- */
+.grid{display:grid;gap:0;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));
+border:1px solid var(--line);background:var(--card);border-radius:var(--radius);overflow:hidden}
+.st{padding:20px 20px 18px;min-height:127px;border-right:1px solid var(--line)}
+.st:last-child{border-right:0}
+.st .k{display:flex;justify-content:space-between;color:var(--ink-faint);font-family:var(--mono);
+font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:400}
+.st .v{color:var(--ink);font-family:var(--display);font-size:clamp(22px,2.4vw,29px);
+font-weight:600;letter-spacing:-.055em;margin:17px 0 7px;line-height:1.05;
+font-variant-numeric:tabular-nums}
+.st .v.mint{color:var(--olive-text)}.st .v.gold{color:var(--orange)}.st .v.crit{color:var(--crit)}
+.st .n{display:flex;align-items:center;gap:6px;color:var(--ink-faint);font-size:11px;
+font-family:var(--mono);flex-wrap:wrap}
+.st .n .d{color:var(--olive-text)}
+.st .n .d.warn{color:var(--orange)}.st .n .d.crit{color:var(--crit)}
+.st.calc .k{cursor:help}
+
+/* ---- panels, tables, and the rest of the data chrome ---- */
+.pan{border:1px solid var(--line);background:var(--card);border-radius:var(--radius);
+margin-top:14px;overflow:hidden}
+.pan .ph{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;
+border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--ink-soft);
+letter-spacing:.04em;background:var(--paper-deep)}
+.pan .pb{padding:15px 16px}
+.pan .pb .exp{color:var(--ink-soft);font-size:12px;margin-top:10px;line-height:1.5}
+/* Type sizes here are LARGER than the prototype's (11px body / 9px header). Its tables hold
+   four decorative rows; these hold the numbers the page exists to report, read at a glance
+   and often compared down a column. 9px mono headers and 11px figures are a mock's sizes, not
+   a tool's. */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{color:var(--ink-faint);background:var(--paper-deep);font-family:var(--mono);font-size:10.5px;
+font-weight:400;letter-spacing:.07em;padding:11px 16px;text-align:left;text-transform:uppercase;
+border-bottom:1px solid var(--line)}
+td{color:var(--ink-soft);border-top:1px solid var(--line);font-size:12.5px;padding:12px 16px}
+tr:hover td{background:var(--paper-deep)}
+td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px}
+th.num{text-align:right}
+td.m{font-family:var(--mono);font-size:11.5px}
+td b{color:var(--ink);font-weight:600}
+tr.hi td{background:var(--olive-tint)}
+.cap{color:var(--ink-soft);font-size:12px;line-height:1.55;margin:5px 0 0}
+.cap b{color:var(--ink);font-weight:600}
+.capw{color:var(--orange);font-size:12px;line-height:1.55;margin:6px 0 9px}
+.src{font-family:var(--mono);font-size:10px;color:var(--ink-faint)}
+.src a{color:var(--ink-soft);border-bottom:1px solid var(--line-dark)}
+.src a:hover{color:var(--olive-text);border-bottom-color:var(--olive)}
+.calcbox{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);background:var(--paper-deep);
+border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;margin-top:11px;
+line-height:1.7;overflow-x:auto}
+.calcbox b{color:var(--ink);font-weight:600}
+.calcbox .cm{color:var(--ink-faint)}
+.bar{display:flex;align-items:center;gap:10px;margin-bottom:5px}
+.bar .l{width:170px;font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)}
+.bar .t{flex:1;height:8px;background:var(--paper-deep);border-radius:99px;overflow:hidden}
+.bar .t>i{display:block;height:100%}
+.bar .v{width:150px;text-align:right;font-family:var(--mono);font-size:10.5px;
+color:var(--ink-faint);font-variant-numeric:tabular-nums;font-size:11.5px}
+.pill{font-family:var(--mono);border:1px solid var(--line-dark);border-radius:999px;
+padding:3px 9px;font-size:10px;color:var(--ink-faint);letter-spacing:.06em;
+font-variant-numeric:tabular-nums;background:var(--card)}
+.pill.on{color:var(--olive-text);border-color:var(--olive);background:var(--olive-tint)}
+.pill.soon{color:var(--orange);border-color:var(--orange-fill);background:var(--orange-tint)}
+.tg{border:1px solid var(--line-dark);border-radius:var(--radius);padding:4px 9px;
+color:var(--ink-faint);background:var(--card)}
+.tg.s{color:var(--olive-text);border-color:var(--olive);background:var(--olive-tint)}
+.tg.HIGH{color:var(--crit)}.tg.MEDIUM{color:var(--orange)}.tg.NONE{color:var(--olive-text)}
+.tags{display:flex;gap:6px;flex-wrap:wrap;font-size:11px;font-family:var(--mono)}
+.rec{border:1px solid var(--line);border-left:3px solid var(--olive);background:var(--card);
+border-radius:var(--radius);padding:15px 18px;margin-bottom:10px}
+.rec.HIGH{border-left-color:var(--crit)}.rec.MEDIUM{border-left-color:var(--orange-fill)}
+.rec h3{margin:0 0 6px;font-size:14px;color:var(--ink);font-weight:600;font-family:var(--sans);
+letter-spacing:0}
+.rec p{margin:0 0 10px;color:var(--ink-soft);font-size:12.5px;line-height:1.55}
+.act{margin-top:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
+.act .ah{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+color:var(--ink-faint);padding:12px 16px 0}
+.act ol{margin:8px 0 0;padding:0 16px 14px;list-style:none;counter-reset:a}
+.act li{counter-increment:a;position:relative;padding:11px 0 11px 32px;border-top:1px solid var(--line)}
+.act li:first-child{border-top:0}
+.act li::before{content:counter(a);position:absolute;left:0;top:12px;width:20px;height:20px;
+border-radius:50%;font-family:var(--mono);font-size:10px;line-height:20px;text-align:center;
+color:var(--ink-faint);border:1px solid var(--line-dark)}
+.act .at{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45}
+.act .ad{color:var(--ink-soft);font-size:12px;line-height:1.55;margin-top:3px}
+.act .ae{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);margin-top:6px;
+padding-left:10px;border-left:2px solid var(--line-dark)}
+.act li.fix .ae{border-left-color:var(--orange-fill)}
+.act li.focus .ae{border-left-color:var(--aqua-fill)}
+.act li.fix::before{color:var(--orange);border-color:var(--orange-fill)}
+.act li.focus::before{color:var(--aqua);border-color:var(--aqua-fill)}
+.snip{color:var(--ink-faint);font-size:11px;max-width:330px;overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}
+
+/* ---- buttons ---- */
+.primary-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;
+border:1px solid var(--primary);background:var(--primary);color:var(--on-olive);
+box-shadow:0 6px 15px color-mix(in srgb,var(--primary) 20%,transparent);padding:12px 16px;
+font-size:12px;font-weight:600;border-radius:var(--radius);cursor:pointer;
+transition:transform var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
+.primary-button:hover{transform:translateY(-2px);
+box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 26%,transparent)}
+.secondary-button{display:inline-flex;align-items:center;gap:7px;color:var(--olive-text);
+border:1px solid var(--olive);background:var(--olive-tint);padding:9px 12px;font-size:10px;
+border-radius:var(--radius);cursor:pointer;font-family:var(--mono)}
+.secondary-button:hover{transform:translateY(-1px)}
+
+/* ---- setup banner + footer ---- */
+.setup{display:flex;align-items:center;gap:17px;margin-top:52px;padding:25px;
+border:1px solid var(--olive);border-radius:var(--radius);
+background:linear-gradient(110deg,var(--olive-tint) 0%,var(--card) 62%,var(--card) 100%)}
+.setup-icon{width:39px;height:39px;display:grid;place-items:center;color:var(--olive-text);
+border:1px solid var(--olive);background:var(--card);flex:none;border-radius:var(--radius);
+font-size:17px}
+.setup-copy{flex:1;min-width:220px}
+.setup-copy h2{color:var(--ink);font-family:var(--display);font-size:18px;letter-spacing:-.04em;
+margin:6px 0 5px}
+.setup-copy p{color:var(--ink-soft);font-size:11px;margin:0}
+.command-box{display:flex;align-items:center;justify-content:space-between;gap:12px;
+min-width:230px;padding:11px 12px;border:1px solid var(--olive);background:var(--card);
+border-radius:var(--radius)}
+.command-box code{color:var(--olive-text);font-family:var(--mono);font-size:10px}
+.command-box .cp{color:var(--olive)}
+/* The footer carries provenance, not marketing: which files were read, whether telemetry is
+   wired, and what left the machine. The design's two-column form holds it — facts on the
+   left, links on the right — but `.foot` itself must stay a BLOCK. Flexing the container
+   directly spread each inline span to the page edges, because these are one flowing sentence
+   and not a row of items. */
+.foot{color:var(--ink-faint);font-family:var(--mono);font-size:10px;padding:27px 0 6px;
+border-top:1px solid var(--line);margin-top:30px}
+.foot-row{display:flex;justify-content:space-between;align-items:baseline;gap:20px;flex-wrap:wrap}
+.foot-row .prov{flex:1;min-width:280px;line-height:1.9}
+.foot-links{display:flex;gap:16px;white-space:nowrap}
+.foot a{color:var(--olive-text)}
+.foot a:hover{text-decoration:underline}
+.foot-note{color:var(--ink-faint);font-family:var(--sans);font-size:11px;line-height:1.55;
+margin-top:12px;max-width:80ch}
+
+@media (max-width:1120px){.wrap{padding-left:26px;padding-right:26px}.top{padding:0 26px}
+.hero-visual{display:none}.hero{gap:10px;min-height:0}}
+@media (max-width:820px){body{display:block}
+.rail{position:static;width:auto;flex:none;height:auto;border-right:0;
+border-bottom:1px solid var(--line-dark)}
+.main{width:100%}.wrap{padding:29px 18px 24px}.top{padding:0 18px;height:auto;
+flex-wrap:wrap;gap:8px;padding-top:10px;padding-bottom:10px}
+.hero{display:block;padding:18px 0 30px}.setup{flex-wrap:wrap}
+.section-heading{align-items:flex-start;flex-direction:column}}
+
+
+/* ---- section-local chrome, carried over ----
+   Rules for the fourteen data sections, lifted from the previous stylesheet and re-pointed
+   at the overhaul's tokens. Lifted rather than rewritten because each one encodes a layout
+   decision about a specific table or panel that the redesign does not change — only the
+   palette and the corner radius do. Hand-mixed hexes in them are mapped by meaning:
+   greens to olive, blues to aqua, purples to violet, ambers to orange. */
 .scope{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 0 26px;
 padding-bottom:18px;border-bottom:1px solid var(--line)}
-.scope .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;
+.scope .lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.15em;
 text-transform:uppercase;color:var(--ink-4);margin-right:4px}
-.scope a{font-family:var(--mono);border:1px solid var(--line-2);border-radius:4px;
+.scope a{font-family:var(--mono);border:1px solid var(--line-2);border-radius:var(--radius);
 padding:5px 12px;font-size:11.5px;color:var(--ink-3);background:var(--surface-2);
 text-decoration:none;cursor:pointer;display:inline-block;transition:all 0.15s ease}
 .scope a:hover{color:var(--ink);border-color:var(--ink-4);background:var(--surface)}
-.scope a.on{color:var(--mint);border-color:#1d3b2e;background:#0F231A}
+.scope a.on{color:var(--mint);border-color:var(--mint-line);background:var(--mint-bg)}
 .scope .span{font-family:var(--mono);font-size:11px;color:var(--ink-4);margin-left:6px;
 font-variant-numeric:tabular-nums}
-.ctl{margin:0 14px 8px;background:var(--surface);border:1px solid var(--line);
-border-radius:7px;padding:11px 12px}
-.ctl .h{font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;
-color:var(--ink-4);margin-bottom:9px}
 .sw{display:flex;align-items:center;justify-content:space-between;padding:4px 0;
 font-size:12.5px;color:var(--ink-2);cursor:default}
 /* Unshipped controls must read as unavailable, not as broken — otherwise they look like the
    live rows above them and a click that does nothing reads as a bug. */
 .sw.dis{color:var(--ink-4);cursor:not-allowed}
-.pill{font-family:var(--mono);border:1px solid var(--line-2);border-radius:9px;
-padding:1px 8px;font-size:9.5px;color:var(--ink-4);letter-spacing:.06em;
-font-variant-numeric:tabular-nums}
-.pill.on{color:var(--mint);border-color:#1d3b2e;background:#0F231A}
-.pill.soon{color:var(--gold);border-color:#3a2f14}
 /* ---- lever headroom, in the rail ----
    Rows are ranked by measured headroom with the dollars attached, so they answer "which of
    these is worth building". The bar is proportional to the largest lever, making the
@@ -122,7 +482,7 @@ font-variant-numeric:tabular-nums}
 .lv{padding:7px 0;border-top:1px solid var(--line)}
 .lv.f{border-top:0;padding-top:1px}
 .lr{display:flex;align-items:baseline;gap:7px;font-size:12.5px}
-.lv .rk{font-family:var(--mono);font-size:9.5px;color:var(--ink-4);min-width:8px}
+.lv .rk{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);min-width:8px}
 .lv .ln{color:var(--ink-3);flex:1;min-width:0;white-space:nowrap;overflow:hidden;
 text-overflow:ellipsis}
 .lv .lu{font-family:var(--mono);font-size:12px;color:var(--mint);
@@ -133,134 +493,28 @@ font-variant-numeric:tabular-nums}
 overflow:hidden}
 .lb i{display:block;height:100%;background:var(--mint);border-radius:2px;min-width:1px}
 .lb.z i{background:var(--line-2)}
-.lm{font-family:var(--mono);font-size:9.5px;color:var(--ink-4);letter-spacing:.04em;
+.lm{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);letter-spacing:.04em;
 display:flex;justify-content:space-between;gap:6px;font-variant-numeric:tabular-nums}
-.lm .HIGH{color:var(--crit)}.lm .MEDIUM{color:var(--gold)}.lm .LOW{color:var(--ink-3)}
+.lm .HIGH{color:var(--crit)}
+.lm .MEDIUM{color:var(--gold)}
+.lm .LOW{color:var(--ink-3)}
 .lm .NONE{color:var(--mint)}
-.btn{display:block;text-align:center;border:1px solid var(--line-2);border-radius:5px;
+.btn{display:block;text-align:center;border:1px solid var(--line-2);border-radius:var(--radius);
 padding:7px;font-size:12px;color:var(--ink-2);margin-top:8px;background:var(--surface-2);
 cursor:pointer}
-.btn:hover{border-color:#2d3435;color:var(--ink);background:var(--surface)}
+.btn:hover{border-color:var(--line-2);color:var(--ink);background:var(--surface)}
 .note-s{color:var(--ink-4);font-size:11.5px;margin-top:7px;line-height:1.45}
 /* Caveat text under a figure. Sized to be read: qualifications on an upper bound are part
    of the number. */
 .note{color:var(--ink-3);font-size:12px;margin-top:9px;line-height:1.5;max-width:78ch}
-.note code{color:var(--ink-2)}.note b{color:var(--ink-2);font-weight:600}
-.up{margin:16px 14px 0;background:linear-gradient(180deg,#0F231A,#0A0C0D);
-border:1px solid #1d3b2e;border-radius:7px;padding:13px}
+.note code{color:var(--ink-2)}
+.note b{color:var(--ink-2);font-weight:600}
+.up{margin:16px 14px 0;background:linear-gradient(180deg,var(--mint-bg),var(--af-ink-850));
+border:1px solid var(--mint-line);border-radius:var(--radius);padding:13px}
 .up .t{color:var(--mint);font-size:13px;margin-bottom:6px;font-weight:600}
 .up p{margin:0 0 10px;color:var(--ink-3);font-size:11.5px;line-height:1.5}
-.up .cta{display:block;text-align:center;background:var(--mint);color:#04120B;
-border-radius:5px;padding:7px;font-size:12px;font-weight:600}
-
-/* ---- main ---- */
-.main{flex:1;min-width:0}
-.top{display:flex;align-items:center;justify-content:space-between;padding:13px 28px;
-border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11px;
-color:var(--ink-3);letter-spacing:.11em;text-transform:uppercase}
-.top b{color:var(--ink-2);font-weight:400}
-.top .w{color:var(--ink);letter-spacing:.01em;font-weight:700}
-.top .p{text-transform:none;letter-spacing:0;color:var(--ink-4)}
-.wrap{padding:24px 28px 72px}
-h1{font-size:clamp(1.15rem,2.1vw,1.5rem);margin:0 0 5px;letter-spacing:-.025em;
-font-weight:700;text-wrap:balance}
-.lede{color:var(--ink-3);font-size:13px;margin-bottom:22px}
-.sec{font-family:var(--mono);color:var(--ink-3);font-size:.63rem;letter-spacing:.16em;
-text-transform:uppercase;margin:30px 0 7px;font-weight:500;scroll-margin-top:18px}
-.hd{font-size:clamp(.95rem,1.7vw,1.12rem);margin:0 0 13px;display:flex;align-items:center;
-justify-content:space-between;font-weight:700;letter-spacing:-.025em}
-.hd .g{color:var(--ink-3);font-weight:400}
-.live{font-family:var(--mono);border:1px solid var(--line-2);border-radius:10px;padding:2px 10px;
-font-size:9.5px;color:var(--ink-2);letter-spacing:.11em;font-weight:400}
-.live i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--mint);margin-right:6px}
-.live.calc i{background:var(--blue)}
-.grid{display:grid;gap:0;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));
-border:1px solid var(--line);border-radius:3px;background:var(--surface-2);overflow:hidden}
-.st{border-right:1px solid var(--line);background:transparent;padding:15px 20px 17px}
-.st:last-child{border-right:0}
-.st .k{font-family:var(--mono);color:var(--ink-3);font-size:10px;letter-spacing:.13em;
-text-transform:uppercase;font-weight:500}
-/* The hero figure is SANS BOLD with tight tracking — a display number, not a code token.
-   Must not drift to mono (cfo.html sets .stat-big to mono; the current control plane does
-   not, and mono reads wider and lighter here), to regular weight, or oversize: the widest
-   value ("$30,829.59", 10 glyphs) has to clear a 232px tile, capping this near 1.75rem. */
-.st .v{font-family:var(--sans);font-weight:700;font-size:clamp(1.4rem,2.3vw,1.75rem);
-line-height:1.05;margin:11px 0 8px;letter-spacing:-.03em;
-font-variant-numeric:tabular-nums;color:var(--ink)}
-.st .v.mint{color:var(--mint)}.st .v.gold{color:var(--gold)}.st .v.crit{color:var(--crit)}
-.st .n{font-family:var(--mono);color:var(--ink-3);font-size:11px;letter-spacing:.01em}
-.st .n .d{color:var(--mint)}
-.st .n .d.warn{color:var(--gold)}.st .n .d.crit{color:var(--crit)}
-/* A tile whose figure carries its own arithmetic. The dotted rule under the label is the
-   only affordance a native title= tooltip can advertise, and costs no JS. */
-.st.calc .k{border-bottom:1px dotted var(--line-2);padding-bottom:3px;cursor:help}
-.src{font-family:var(--mono);font-size:10.5px;color:var(--ink-4)}
-.src a{color:var(--ink-3);border-bottom:1px solid var(--line-2)}
-.src a:hover{color:var(--mint);border-bottom-color:#1d3b2e}
-.calcbox{font-family:var(--mono);font-size:11px;color:var(--ink-3);background:#0F1213;
-border:1px solid var(--line);border-radius:3px;padding:10px 12px;margin-top:11px;
-line-height:1.7;overflow-x:auto}
-.calcbox b{color:var(--ink-2);font-weight:600}
-.calcbox .cm{color:var(--ink-4)}
-.pan{border:1px solid var(--line);background:var(--surface-2);border-radius:3px;margin-top:11px}
-.pan .ph{display:flex;align-items:center;justify-content:space-between;padding:10px 15px;
-border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
-.pan .pb{padding:13px 15px}
-.pan .pb .exp{color:var(--ink-3);font-size:12.5px;margin-top:10px;line-height:1.5}
-/* A caption belonging to one block, not to the panel: says what the block is and what to
-   do with it, right where it is read. A reader should never have to hover a tooltip or
-   scroll to a footnote to learn what a list of filenames is for. */
-.cap{color:var(--ink-2);font-size:12px;line-height:1.55;margin:5px 0 0}
-.cap b{color:var(--ink);font-weight:600}
-.capw{color:#B99A55;font-size:12px;line-height:1.55;margin:6px 0 9px}
-/* Action items. A recommendation a reader cannot check is an opinion with a border around
-   it, so every row carries the evidence that produced it, in mono, under the prose. The
-   left rule colours by kind: something to fix, something to discount, somewhere to start. */
-.act{margin-top:14px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2)}
-.act .ah{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
-color:var(--ink-2);padding:10px 14px 0}
-.act ol{margin:8px 0 0;padding:0 14px 12px;list-style:none;counter-reset:a}
-.act li{counter-increment:a;position:relative;padding:9px 0 9px 30px;
-border-top:1px solid var(--line)}
-.act li:first-child{border-top:0}
-.act li::before{content:counter(a);position:absolute;left:0;top:10px;width:19px;height:19px;
-border-radius:50%;font-family:var(--mono);font-size:10.5px;line-height:19px;text-align:center;
-color:var(--ink-3);border:1px solid var(--line-2)}
-.act .at{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45}
-.act .ad{color:var(--ink-2);font-size:12px;line-height:1.55;margin-top:3px}
-.act .ae{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:5px;
-padding-left:9px;border-left:2px solid var(--line-2)}
-.act li.fix .ae{border-left-color:#3d3014}
-.act li.focus .ae{border-left-color:#1e355b}
-.act li.fix::before{color:var(--gold);border-color:#3d3014}
-.act li.focus::before{color:var(--blue);border-color:#1e355b}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th{font-family:var(--mono);text-align:left;color:var(--ink-4);font-weight:400;padding:7px 8px;
-font-size:9.5px;text-transform:uppercase;letter-spacing:.11em;border-bottom:1px solid var(--line)}
-td{padding:7px 8px;border-bottom:1px solid #101314;color:var(--ink-2)}
-td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;
-letter-spacing:-.01em}
-th.num{text-align:right}
-td.m{font-family:var(--mono);font-size:11.5px}
-td b{color:var(--ink);font-weight:600}
-tr.hi td{background:#0C1512}
-.bar{display:flex;align-items:center;gap:10px;margin-bottom:3px}
-.bar .l{width:158px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
-.bar .t{flex:1;height:9px;background:#141718;border-radius:2px;overflow:hidden}
-.bar .t>i{display:block;height:100%}
-.bar .v{width:140px;text-align:right;font-family:var(--mono);font-size:11.5px;
-color:var(--ink-3);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.rec{border:1px solid var(--line);border-left:2px solid var(--mint);background:var(--surface-2);
-border-radius:3px;padding:13px 16px;margin-bottom:9px}
-.rec.HIGH{border-left-color:var(--crit)}.rec.MEDIUM{border-left-color:var(--gold)}
-.rec h3{margin:0 0 6px;font-size:14.5px;color:var(--ink);font-weight:600}
-.rec p{margin:0 0 10px;color:var(--ink-3);font-size:13px;line-height:1.55}
-.tags{display:flex;gap:6px;flex-wrap:wrap;font-size:10.5px;font-family:var(--mono)}
-.tg{border:1px solid var(--line-2);border-radius:3px;padding:2px 8px;color:var(--ink-4)}
-.tg.s{color:var(--mint);border-color:#1d3b2e}
-.tg.HIGH{color:var(--crit)}.tg.MEDIUM{color:var(--gold)}.tg.NONE{color:var(--mint)}
-.snip{color:var(--ink-4);font-size:11.5px;max-width:330px;overflow:hidden;
-text-overflow:ellipsis;white-space:nowrap}
+.up .cta{display:block;text-align:center;background:var(--mint);color:var(--af-ink-900);
+border-radius:var(--radius);padding:7px;font-size:12px;font-weight:600}
 /* ---- § 02 breakdown tables ----
    The quality comparison tables put three rates side by side across engines, models and
    task domains, so they get their own scale rather than the shared table rules: a mono
@@ -272,7 +526,7 @@ text-overflow:ellipsis;white-space:nowrap}
 color:var(--ink-2);font-weight:500;white-space:nowrap}
 .qhd .r{flex:1;height:1px;background:var(--line)}
 .qhd .n{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);white-space:nowrap}
-.qwrap{border:1px solid var(--line);border-radius:3px;background:var(--surface);overflow-x:auto}
+.qwrap{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);overflow-x:auto}
 .qt{width:100%;border-collapse:collapse;font-size:12.5px}
 /* The global `th` is deliberately quiet — 9.5px, weight 400, --ink-4 — which works for a
    two column strip but not here: against --surface that is roughly 2.3:1, under the 4.5:1
@@ -289,10 +543,10 @@ border-bottom:2px solid var(--line-2)}
 vertical-align:middle}
 .qt td.num{color:var(--ink)}
 .qt tbody tr:last-child td{border-bottom:0}
-.qt tbody tr:hover td{background:#0F1314}
+.qt tbody tr:hover td{background:var(--af-ink-850)}
 /* Group separator. A row, not a second table: the columns must stay in one ruler. */
 .qt tr.grp td{padding:9px 13px 6px;background:var(--surface-2);font-family:var(--mono);
-font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
 .qt tr.grp:first-child td{border-top:0}
 .qt tr.grp:hover td{background:var(--surface-2)}
 .qt .nm{color:var(--ink);font-weight:600;white-space:nowrap}
@@ -302,47 +556,36 @@ font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)
 .qt .shr{font-family:var(--mono);font-size:10.5px;color:var(--ink-4);font-weight:400}
 .qt .u{color:var(--ink-4)}
 .qt td.z{color:var(--ink-4)}
-.eng{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.01em;
-border:1px solid var(--line-2);border-radius:4px;padding:2px 9px;display:inline-block}
-.eng.claude{color:var(--blue);border-color:#1e355b;background:#0d1c33}
-.eng.anti{color:var(--mint);border-color:#1d3b2e;background:var(--good-bg)}
-.eng.codex{color:#C084FC;border-color:#3b1e5b;background:#1a0d33}
 .gr{font-family:var(--mono);font-size:12px;font-weight:700;display:inline-block;min-width:64px;
-text-align:center;padding:2px 0;border:1px solid;border-radius:4px;
+text-align:center;padding:2px 0;border:1px solid;border-radius:var(--radius);
 font-variant-numeric:tabular-nums}
 .gr.na{color:var(--ink-4);border-color:var(--line-2)}
-.gr.hi{color:var(--mint);border-color:#1d3b2e;background:var(--good-bg)}
-.gr.mid{color:var(--gold);border-color:#3d3014;background:var(--warn-bg)}
-.gr.lo{color:var(--crit);border-color:#4a1e17;background:#2a110e}
-.mt{display:block;width:74px;margin-left:auto;font-family:var(--mono);
-font-variant-numeric:tabular-nums;letter-spacing:-.01em;color:var(--ink)}
-.mt i{display:block;height:2px;margin-top:5px;border-radius:1px;background:#1B2021}
-.mt i>b{display:block;height:100%;border-radius:1px;background:var(--mint)}
-.mt.mid i>b{background:var(--gold)}
-.mt.lo i>b{background:var(--crit)}
+.gr.hi{color:var(--mint);border-color:var(--mint-line);background:var(--good-bg)}
+.gr.mid{color:var(--gold);border-color:var(--gold-line);background:var(--warn-bg)}
+.gr.lo{color:var(--crit);border-color:rgba(255,122,132,.22);background:rgba(255,122,132,.09)}
 /* Activity chart. Inline SVG scaled by the container: a strict CSP blocks external chart
    libraries, and the page is server-rendered. Colours come from the shared variables. */
 .chart{display:block;width:100%;height:auto}
-.chart text{font-family:var(--mono);font-size:9.5px;fill:var(--ink-4)}
+.chart text{font-family:var(--mono);font-size:10.5px;fill:var(--ink-4)}
 .chart .ax{stroke:var(--line-2);stroke-width:1}
 .lg{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:10.5px;
 color:var(--ink-4);margin-top:10px}
 .lg i{display:inline-block;width:8px;height:8px;margin-right:6px;vertical-align:-1px}
 /* ---- Q&A (§ 09). Native <details>, not a JS tab strip: the page ships no script, and a
    disclosure widget is keyboard-reachable, in-page-searchable when open, and printable. */
-.qa{border:1px solid var(--line);background:var(--surface-2);border-radius:3px;margin-top:9px}
+.qa{border:1px solid var(--line);background:var(--surface-2);border-radius:var(--radius);margin-top:9px}
 .qa>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:13.5px;font-weight:600;
 color:var(--ink);display:flex;gap:11px;align-items:baseline}
 .qa>summary::-webkit-details-marker{display:none}
 .qa>summary::before{content:"+";font-family:var(--mono);color:var(--mint);font-weight:400}
 .qa[open]>summary::before{content:"\2013"}
-.qa>summary:hover{background:#141718}
+.qa>summary:hover{background:var(--hover)}
 .qa[open]>summary{border-bottom:1px solid var(--line)}
 .qa .a{padding:14px 16px 16px 39px;color:var(--ink-2);font-size:13px;line-height:1.62}
 .qa .a p{margin:0 0 11px}
 .qa .a p:last-child{margin:0}
 .qa .a b{color:var(--ink);font-weight:600}
-.qa .a code{background:#0F1213;border:1px solid var(--line);border-radius:3px;padding:1px 5px}
+.qa .a code{background:var(--af-ink-850);border:1px solid var(--line);border-radius:var(--radius);padding:1px 5px}
 .qa .a table{margin:4px 0 11px}
 /* The caveat that travels with a simulated number. Set apart from the answer prose so it is
    not read as part of the finding, and kept legible — an unreadable assumption is not
@@ -353,66 +596,78 @@ font-size:12px}
 /* ---- § 10 about / contact. Cards rather than a paragraph: what ACE is, how to reach the
    team, and how to share it are independent errands. Same border/surface vocabulary as .pan
    so it reads as part of the page, not an ad. */
-.tag{border:1px solid rgba(29,59,46,0.85);border-radius:8px;padding:22px 24px;margin-top:14px;
-background:radial-gradient(circle at 10% 20%, rgba(15,35,26,0.7) 0%, rgba(10,12,13,0.95) 90%);
-box-shadow:0 8px 32px -8px rgba(0,0,0,0.5), inset 0 1px 0 rgba(0,230,153,0.18);position:relative;overflow:hidden}
+.tag{border:1px solid var(--olive);border-radius:var(--radius);padding:22px 24px;margin-top:14px;
+background:linear-gradient(110deg,var(--olive-tint) 0%,var(--card) 58%,var(--card) 100%);
+box-shadow:var(--shadow);position:relative;overflow:hidden}
 .tag::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
-background:linear-gradient(90deg,transparent,rgba(0,230,153,0.45),transparent)}
-.tag .t{font-size:clamp(1.05rem,2vw,1.3rem);font-weight:700;letter-spacing:-.02em;
-background:linear-gradient(135deg,#ffffff 0%,var(--mint) 100%);-webkit-background-clip:text;
--webkit-text-fill-color:transparent;text-wrap:balance}
-.tag p{margin:10px 0 0;color:var(--ink-2);font-size:13.5px;line-height:1.65;max-width:76ch}
+background:linear-gradient(90deg,transparent,var(--olive),transparent)}
+.tag .t{font-family:var(--display);font-size:clamp(1.05rem,2vw,1.35rem);font-weight:600;
+letter-spacing:-.04em;color:var(--ink);text-wrap:balance}
+.tag p{margin:10px 0 0;color:var(--ink-soft);font-size:13px;line-height:1.65;max-width:76ch}
 .cards{display:grid;gap:14px;margin-top:14px;
 grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
-.card{border:1px solid rgba(255,255,255,0.08);background:rgba(18,22,23,0.75);backdrop-filter:blur(12px);
-border-radius:8px;padding:20px 22px 22px;display:flex;flex-direction:column;position:relative;
-transition:all .25s cubic-bezier(0.16,1,0.3,1);box-shadow:0 4px 16px rgba(0,0,0,0.3)}
-.card:hover{border-color:rgba(0,230,153,0.4);transform:translateY(-3px);
-box-shadow:0 12px 28px -6px rgba(0,230,153,0.15),0 4px 16px rgba(0,0,0,0.4)}
-.card .k{font-family:var(--mono);color:var(--ink-4);font-size:9.5px;letter-spacing:.13em;
+.card{border:1px solid var(--line);background:var(--card);border-radius:var(--radius);
+padding:20px 22px 22px;display:flex;flex-direction:column;position:relative;
+box-shadow:var(--shadow-sm);transition:border-color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.card:hover{border-color:var(--olive);transform:translateY(-3px)}
+.card .k{font-family:var(--mono);color:var(--ink-faint);font-size:10.5px;letter-spacing:.13em;
 text-transform:uppercase;margin-bottom:10px}
-.card h3{margin:4px 0 8px;font-size:14.5px;color:var(--ink);font-weight:600;letter-spacing:-.01em}
-.card p{margin:0 0 16px;color:var(--ink-3);font-size:13px;line-height:1.6;flex:1}
+.card h3{margin:4px 0 8px;font-size:14px;color:var(--ink);font-weight:600;letter-spacing:-.01em}
+.card p{margin:0 0 16px;color:var(--ink-soft);font-size:12.5px;line-height:1.6;flex:1}
 /* Spacing between glyph and label is `gap`, not a margin on the arrow: the arrow slides on
    hover, and a transformed element with a margin drags the gap along with it. break-all is
    deliberately not used — it would split "acefleet.dev" mid-word — but the mail buttons still
    have to survive a long address in a 270px card, so wrapping is allowed anywhere only once a
    word genuinely cannot fit. */
 .lk{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);
-font-size:12px;line-height:1.2;color:var(--mint);background:rgba(0,230,153,0.06);
-border:1px solid rgba(0,230,153,0.25);border-radius:7px;padding:9px 14px;text-decoration:none;
-overflow-wrap:anywhere;
-transition:background .2s ease,border-color .2s ease,color .2s ease,box-shadow .2s ease,transform .2s ease}
-.lk:hover{background:rgba(0,230,153,0.16);border-color:var(--mint);color:#ffffff;
-box-shadow:0 0 12px rgba(0,230,153,0.25);transform:translateY(-1px)}
-.lk:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+font-size:12px;line-height:1.2;color:var(--olive-text);background:var(--olive-tint);
+border:1px solid var(--olive);border-radius:var(--radius);padding:9px 14px;overflow-wrap:anywhere;
+transition:background var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.lk:hover{background:var(--olive-light);transform:translateY(-1px)}
+.lk:focus-visible{outline:2px solid var(--olive-text);outline-offset:2px}
 .lk:active{transform:translateY(0)}
-.lk .arw{transition:transform .2s ease}
+.lk .arw{transition:transform var(--dur) var(--ease)}
 .lk:hover .arw{transform:translateX(3px)}
-/* The one outbound link on the page, so it carries more weight than the mail buttons. */
-.site-lk{background:linear-gradient(135deg,rgba(0,230,153,0.22) 0%,rgba(0,230,153,0.08) 100%);
-border-color:rgba(0,230,153,0.55);color:#EAFFF6;font-weight:600;font-size:12.5px;padding:11px 18px;
-box-shadow:0 2px 10px -2px rgba(0,230,153,0.22)}
-.site-lk:hover{background:linear-gradient(135deg,rgba(0,230,153,0.34) 0%,rgba(0,230,153,0.16) 100%);
-box-shadow:0 6px 18px -4px rgba(0,230,153,0.35)}
-@media (prefers-reduced-motion:reduce){
-.lk,.lk .arw{transition:none}
-.lk:hover{transform:none}
-.lk:hover .arw{transform:none}}
-.foot{color:var(--ink-4);font-size:11.5px;margin-top:36px;padding-top:14px;
-border-top:1px solid var(--line);line-height:1.65}
+/* The one outbound link on the page, so it carries more weight than the mail buttons: a
+   filled button rather than an outlined one.
+
+   Its text is `--on-olive`, NOT `--ink`. The fill is a light olive in BOTH themes, so text
+   that inverts with the page lands white-on-lime in dark and is unreadable — which is exactly
+   what happened when this rule was carried over from the old stylesheet, where a translucent
+   tint got mapped to an opaque fill and the colour underneath stopped being a background. */
+.site-lk{background:var(--primary);border-color:var(--primary);color:var(--on-olive);
+font-weight:600;font-size:12.5px;padding:11px 18px;
+box-shadow:0 6px 15px color-mix(in srgb,var(--primary) 22%,transparent)}
+.site-lk:hover{background:var(--olive);border-color:var(--olive);color:var(--on-olive);
+transform:translateY(-2px)}
 /* ---- modal drawer ---- */
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);z-index:9999;justify-content:center;align-items:center}
-.modal-content{background:#121516;border:1px solid rgba(255,255,255,0.12);border-radius:10px;width:92%;max-width:820px;max-height:88vh;overflow-y:auto;padding:24px;color:var(--ink);box-shadow:0 24px 48px rgba(0,0,0,0.6)}
+.modal-content{background:var(--af-ink-850);border:1px solid var(--line-2);border-radius:var(--radius);width:92%;max-width:820px;max-height:88vh;overflow-y:auto;padding:24px;color:var(--ink);box-shadow:0 24px 48px rgba(0,0,0,0.6)}
 .modal-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:18px}
 .modal-header h2{margin:0;font-size:17px;color:var(--ink);font-weight:600;display:flex;align-items:center;gap:8px}
 .modal-close{background:transparent;border:none;color:var(--ink-3);font-size:22px;cursor:pointer;padding:2px 8px;line-height:1}
 .modal-close:hover{color:var(--mint)}
-.metrics-box{background:#0a0c0d;border:1px solid #1e2325;border-radius:6px;padding:14px;margin-bottom:16px;font-family:var(--mono);font-size:12.5px;color:var(--mint);white-space:pre-wrap;word-break:break-all;max-height:260px;overflow-y:auto}
-.tab-btn{background:#161a1d;border:1px solid var(--line-2);color:var(--ink-2);padding:6px 14px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.15s ease}
+.metrics-box{background:var(--af-ink-850);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-family:var(--mono);font-size:12.5px;color:var(--mint);white-space:pre-wrap;word-break:break-all;max-height:260px;overflow-y:auto}
+.tab-btn{background:var(--af-ink-800);border:1px solid var(--line-2);color:var(--ink-2);padding:6px 14px;border-radius:var(--radius);cursor:pointer;font-size:12px;font-weight:600;transition:all 0.15s ease}
 .tab-btn:hover{color:var(--ink);border-color:var(--line-3)}
-.tab-btn.on{background:var(--mint);color:#04120B;border-color:var(--mint)}
-.promql-tag{background:#0a0c0d;border:1px solid #1e2325;border-radius:4px;padding:4px 8px;font-family:var(--mono);font-size:11.5px;color:#a3e635;display:inline-block;}
+.tab-btn.on{background:var(--mint);color:var(--af-ink-900);border-color:var(--mint)}
+.promql-tag{background:var(--af-ink-850);border:1px solid var(--line-2);border-radius:var(--radius);padding:4px 8px;font-family:var(--mono);font-size:11.5px;color:var(--af-signal-lime);display:inline-block;}
+
+/* Engine identity chips, quality meters, and two small inline helpers. Their previous rules
+   lived in the stylesheet this replaced; the palette is the only thing that moved. */
+.eng{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+text-transform:uppercase;padding:3px 8px;border:1px solid var(--line-dark);
+border-radius:999px;background:var(--card);color:var(--ink-faint)}
+.eng.claude{color:var(--aqua);border-color:var(--aqua-fill);background:var(--aqua-tint)}
+.eng.anti{color:var(--olive-text);border-color:var(--olive);background:var(--olive-tint)}
+.eng.codex{color:var(--violet);border-color:var(--violet-fill);background:var(--violet-tint)}
+.mt i{display:block;height:3px;margin-top:5px;border-radius:99px;background:var(--line-dark)}
+.mt i>b{display:block;height:100%;border-radius:99px;background:var(--olive)}
+.mt.mid i>b{background:var(--orange-fill)}
+.mt.lo i>b{background:var(--crit)}
+.hint{color:var(--ink-faint);font-size:11px}
+.risk{font-family:var(--mono);font-size:10px;letter-spacing:.06em}
+.breadcrumbs{display:flex;align-items:center;gap:10px}
 """
 
 
@@ -571,6 +826,34 @@ def _mask_home(p: Any) -> str:
     # separator with a dash, so the home directory shows up there in a form the plain
     # replace above cannot see: /Users/alex -> -Users-alex.
     return p.replace(home, "~").replace(home.replace(os.sep, "-"), "~")
+
+
+def _theme_attr(d: Dict[str, Any]) -> str:
+    """``data-theme`` for the root element, or nothing at all under ``auto``.
+
+    Emitting ``data-theme="auto"`` would be the bug: the light rules are written as
+    ``:root:not([data-theme="dark"])`` inside a ``prefers-color-scheme`` query, and any
+    attribute present makes the pinned selectors the ones that match.
+    """
+    t = resolve_theme(d.get("theme"))
+    return "" if t == "auto" else f" data-theme='{t}'"
+
+
+def _theme_switch(d: Dict[str, Any]) -> str:
+    """AUTO / LIGHT / DARK, as three links.
+
+    Links and not a control, because this page ships its state server-side: a client-side
+    toggle and a 20-second ``<meta refresh>`` are two writers of the same value, and the bug
+    where the page snaps back to the other theme mid-read is the obvious consequence. The
+    server sets a cookie, so the refresh and every other link carry the choice without any
+    of them having to know about it.
+    """
+    cur = resolve_theme(d.get("theme"))
+    return "<span class='thm'>" + "".join(
+        f"<a class=\"{'on' if t == cur else ''}\" href='?theme={t}' "
+        f"title='{'follow the system setting' if t == 'auto' else t}'>{t}</a>"
+        for t in THEMES
+    ) + "</span>"
 
 
 def _sec(num: str, label: str, head: str, tail: str, badge: str = "LIVE") -> str:
@@ -796,7 +1079,7 @@ def _activity_svg(daily: List[Dict[str, Any]], commits: bool) -> str:
         tok = r.get("tokens") or 0
         if tok:
             h = max(1.5, tok / peak_t * t_h)
-            fill = "var(--mint)"
+            fill = "var(--blue)"
         else:
             h, fill = 1.5, "var(--line-2)"
         day = escape(str(r.get("day") or ""))
@@ -834,7 +1117,7 @@ def _activity_svg(daily: List[Dict[str, Any]], commits: bool) -> str:
         )
 
     legend = (
-        "<div class='lg'><span><i style='background:var(--mint)'></i>tokens/day</span>"
+        "<div class='lg'><span><i style='background:var(--blue)'></i>tokens/day</span>"
         + (
             "<span><i style='background:var(--gold)'></i>commits/day</span>"
             if commits
@@ -1054,7 +1337,7 @@ def _quality(qm: Optional[Dict[str, Any]]) -> str:
             else ""
         )
         thrash_html = (
-            f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid #3d3014;border-radius:4px;'>"
+            f"<div style='margin-top:12px;padding:10px 14px;background:var(--warn-bg);border:1px solid var(--gold-line);border-radius:0;'>"
             f"<b style='color:var(--gold);font-size:12px;'>\u26a0\ufe0f Files the agent could not settle "
             f"({_THRASH_EDITS}+ edits in one session){escape(more)}:</b>"
             f"<p class='capw'>Each of these is a file an agent kept rewriting without "
@@ -1247,39 +1530,39 @@ def _refs(d: Dict[str, Any]) -> Dict[str, Any]:
 
 _MODE_CSS = """
 .ref{display:flex;gap:6px;align-items:center;margin-top:5px;font:10px/1.4 ui-monospace,monospace}
-.ref .rk{padding:1px 5px;border-radius:3px;letter-spacing:.04em;font-size:9px;
-  background:#14301f;color:#4ade80;border:1px solid #1e4d33}
-.ref.peer .rk{background:#1b2a44;color:#7dabf8;border-color:#26406b}
-.ref.published .rk{background:#2c2440;color:#c4a3f5;border-color:#42356b}
-.ref.measured .rk{background:#14301f;color:#4ade80;border-color:#1e4d33}
-.ref.none .rk{background:#2a2320;color:#d0a172;border-color:#4a3a2c}
-.ref .rv{color:#7d8590;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ref.none .rv{color:#6b6560;font-style:italic}
+.ref .rk{padding:1px 5px;border-radius:var(--radius);letter-spacing:.04em;font-size:10px;
+  background:var(--olive-tint);color:var(--olive-text);border:1px solid var(--olive)}
+.ref.peer .rk{background:rgba(126,220,255,.08);color:var(--af-signal-cyan);border-color:rgba(126,220,255,.28)}
+.ref.published .rk{background:rgba(170,138,255,.10);color:var(--af-signal-violet);border-color:rgba(170,138,255,.24)}
+.ref.measured .rk{background:var(--olive-tint);color:var(--olive-text);border-color:var(--olive)}
+.ref.none .rk{background:rgba(255,206,107,.07);color:var(--af-signal-amber);border-color:rgba(255,206,107,.16)}
+.ref .rv{color:var(--af-status-off);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ref.none .rv{color:var(--af-paper-32);font-style:italic}
 .imp{display:none}
 body.m-shadow .imp.on,body.m-prod .imp.on{display:flex;gap:6px;align-items:center;
   margin-top:5px;font:10px/1.4 ui-monospace,monospace;cursor:help}
-.imp .ik{padding:1px 5px;border-radius:3px;font-size:9px;letter-spacing:.04em;
-  background:#0f2e3a;color:#5ec8e5;border:1px solid #174657}
-body.m-prod .imp .ik{background:#3a2216;color:#f0a868;border-color:#5c3820}
-.imp .iv{color:#5ec8e5}
-.imp.flat .ik{background:#22262b;color:#8b949e;border-color:#2f353c}
-.imp.flat .iv{color:#6e7681;font-style:italic;white-space:normal;line-height:1.4}
-body.m-prod .imp .iv{color:#f0a868}
-.modebar{display:flex;gap:0;margin:4px 0 2px;border:1px solid #23282e;border-radius:5px;
-  overflow:hidden;background:#0d1013}
+.imp .ik{padding:1px 5px;border-radius:var(--radius);font-size:10px;letter-spacing:.04em;
+  background:rgba(126,220,255,.09);color:var(--af-signal-cyan);border:1px solid rgba(126,220,255,.26)}
+body.m-prod .imp .ik{background:rgba(255,206,107,.08);color:var(--af-signal-amber);border-color:rgba(255,206,107,.28)}
+.imp .iv{color:var(--af-signal-cyan)}
+.imp.flat .ik{background:var(--af-ink-800);color:var(--af-status-off);border-color:var(--line-2)}
+.imp.flat .iv{color:var(--af-status-off);font-style:italic;white-space:normal;line-height:1.4}
+body.m-prod .imp .iv{color:var(--af-signal-amber)}
+.modebar{display:flex;gap:0;margin:4px 0 2px;border:1px solid var(--line-2);border-radius:var(--radius);
+  overflow:hidden;background:var(--af-ink-850)}
 .modebar button{flex:1;padding:5px 0;background:transparent;border:0;cursor:pointer;
-  color:#6e7681;font:10px/1 ui-monospace,monospace;letter-spacing:.06em}
-.modebar button.on{background:#14301f;color:#4ade80}
-.modebar button.on[data-mode=prod]{background:#3a2216;color:#f0a868}
-.modebar button:hover:not(.on){color:#adbac7;background:#12161a}
-.lvh{font:9px/1.4 ui-monospace,monospace;color:#6e7681;letter-spacing:.08em;text-transform:uppercase;margin:9px 0 4px;padding-top:8px;border-top:1px solid #1c2126}
-.modenote{font:10px/1.5 ui-monospace,monospace;color:#6e7681;margin-top:5px}
+  color:var(--af-status-off);font:10px/1 ui-monospace,monospace;letter-spacing:.06em}
+.modebar button.on{background:var(--olive-tint);color:var(--olive-text)}
+.modebar button.on[data-mode=prod]{background:rgba(255,206,107,.08);color:var(--af-signal-amber)}
+.modebar button:hover:not(.on){color:var(--af-paper-80);background:var(--af-ink-800)}
+.lvh{font:10px/1.4 ui-monospace,monospace;color:var(--af-status-off);letter-spacing:.08em;text-transform:uppercase;margin:9px 0 4px;padding-top:8px;border-top:1px solid var(--af-ink-800)}
+.modenote{font:10px/1.5 ui-monospace,monospace;color:var(--af-status-off);margin-top:5px}
 /* The counterfactual, on the figure itself: what the tile reads now, struck, above what
    the enabled skill would have made it read. The badge beneath still carries the delta and
    the attribution -- the struck pair says how big, the badge says why and by whom. */
 .st .v .was{display:block;font-size:.56em;font-weight:600;line-height:1.3;
   color:var(--ink-4);text-decoration:line-through;text-decoration-thickness:1px;
-  text-decoration-color:rgba(255,255,255,0.34)}
+  text-decoration-color:var(--line-dark)}
 .st .v .now{display:block;color:var(--mint)}
 .st .v .now .pc{font-family:var(--mono);font-size:.46em;font-weight:600;letter-spacing:.01em;
   margin-left:.5em;color:var(--mint);opacity:.72}
@@ -1752,7 +2035,7 @@ def _fleet(f: Optional[Dict[str, Any]], refs: Optional[Dict[str, Any]] = None) -
                 m.get("model") or "—",
                 f"{_compact(m.get('prompt_tokens'))} · {_pct(m.get('token_share'))}",
                 m.get("token_share") or 0.0,
-                "var(--mint)",
+                "var(--blue)",
             )
             for m in models
         )
@@ -2331,8 +2614,8 @@ def _about() -> str:
         # LOCAL-FIRST and ZERO-CLOUD OVERHEAD were true of the sidecar but read as claims
         # about Fleet in this position, which inverts what it is.
         "<div style='display:flex;gap:6px;flex-wrap:wrap;'>"
-        "<span class='pill on' style='background:#0F231A;color:var(--mint);border-color:#1d3b2e;'>⚡ DROP-IN PROXY</span>"
-        "<span class='pill on' style='background:#0d1c33;color:var(--blue);border-color:#1e355b;'>📉 CUT AI BILLS</span>"
+        "<span class='pill on' style='background:var(--mint-bg);color:var(--mint);border-color:var(--mint-line);'>⚡ DROP-IN PROXY</span>"
+        "<span class='pill on' style='background:rgba(126,220,255,.07);color:var(--blue);border-color:var(--blue-line);'>📉 CUT AI BILLS</span>"
         "</div></div>"
         "<p>ACE Fleet is a cost-saving proxy for companies scaling AI applications — it sits in "
         "front of the model providers and cuts what an organisation spends on inference as that "
@@ -2405,13 +2688,13 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
         "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;'>"
         "<div class='t'>Native Prometheus Exposition Exporter (v0.0.4)</div>"
         "<div style='display:flex;gap:6px;'>"
-        "<span class='pill on' style='background:#0F231A;color:var(--mint);border-color:#1d3b2e;'>✓ OPENMETRICS COMPLIANT</span>"
-        "<span class='pill on' style='background:#0d1c33;color:var(--blue);border-color:#1e355b;'>⚡ LIVE TEXT STREAM</span>"
+        "<span class='pill on' style='background:var(--mint-bg);color:var(--mint);border-color:var(--mint-line);'>✓ OPENMETRICS COMPLIANT</span>"
+        "<span class='pill on' style='background:rgba(126,220,255,.07);color:var(--blue);border-color:var(--blue-line);'>⚡ LIVE TEXT STREAM</span>"
         "</div></div>"
         "<p>The ACE sidecar exposes real-time Prometheus text exposition metrics at <code>/metrics</code> (HTTP GET). "
         "Standardized for continuous time-series scraping into Prometheus, Grafana Alloy, OpenTelemetry Collector, VictoriaMetrics, Datadog, or ClickHouse.</p>"
         "<div style='display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap;'>"
-        "<input type='text' readonly id='metricsUrlSection' value='' style='flex:1;min-width:250px;background:#0b0c0d;border:1px solid #282e30;color:var(--mint);padding:8px 12px;border-radius:6px;font-family:var(--mono);font-size:13px;' />"
+        "<input type='text' readonly id='metricsUrlSection' value='' style='flex:1;min-width:250px;background:var(--af-ink-850);border:1px solid var(--line-2);color:var(--mint);padding:8px 12px;border-radius:0;font-family:var(--mono);font-size:13px;' />"
         "<button class='lk' style='cursor:pointer;' onclick='copyMetricsSectionUrl(this)'><span>📋 Copy Endpoint URL</span></button>"
         "<a class='lk site-lk' target='_blank' rel='noopener' href='/metrics'><span>🌐 Open Raw Stream</span><span class='arw'>↗</span></a>"
         "</div>"
@@ -2427,7 +2710,7 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
         "</div></div>"
         "<div class='pb'>"
         "<div id='collectorConfigBox' class='calcbox' style='margin:0;position:relative;'>"
-        "<pre id='collectorCode' style='color:#a3e635;margin:0;font-family:var(--mono);font-size:12px;white-space:pre-wrap;'></pre>"
+        "<pre id='collectorCode' style='color:var(--af-signal-lime);margin:0;font-family:var(--mono);font-size:12px;white-space:pre-wrap;'></pre>"
         "<button class='btn' style='position:absolute;top:10px;right:10px;padding:4px 10px;font-size:11px;cursor:pointer;' onclick='copyCollectorConfig(this)'>Copy Config</button>"
         "</div>"
         "</div></div>"
@@ -2459,18 +2742,35 @@ def _prometheus_section(d: Dict[str, Any]) -> str:
 # highlight CSS are generated from it -- an entry and its :target rule cannot drift apart,
 # the same reasoning that keeps _sec's id keyed off the section number.
 _NAV = (
-    ("◫", "Overview", "01"),
-    ("🎯", "Code Quality", "02"),
-    ("⇄", "Strategies", "04"),
-    ("✦", "Recommendations", "06"),
-    ("⚡", "Workflow Skills", "07"),
-    ("✓", "Installed Skills", "08"),
-    ("◷", "Sessions", "09"),
-    ("⧗", "Time", "10"),
-    ("📊", "Prometheus Metrics", "12"),
-    ("?", "Common questions", "13"),
-    ("◈", "About ACE", "14"),
+    (
+        "Workspace",
+        (
+            ("◫", "Overview", "01", ""),
+            ("🎯", "Code Quality", "02", ""),
+            ("◷", "Sessions", "09", ""),
+            ("⧗", "Time", "10", ""),
+        ),
+    ),
+    (
+        "Optimize",
+        (
+            ("⇄", "Strategies", "04", ""),
+            ("✦", "Recommendations", "06", ""),
+            ("⚡", "Workflow Skills", "07", ""),
+            ("✓", "Installed Skills", "08", ""),
+        ),
+    ),
+    (
+        "Manage",
+        (
+            ("📊", "Prometheus Metrics", "12", ""),
+            ("?", "Common questions", "13", ""),
+            ("◈", "About ACE", "14", ""),
+        ),
+    ),
 )
+#: The first item, which carries the initial highlight before any anchor is clicked.
+_NAV_FIRST = _NAV[0][1][0][2]
 # The numbers are the anchors — `#s<num>` — so they have to match the section each rail item
 # means, and each has to be unique across the page. Both failed here: Common questions pointed
 # at #s11 and landed on Live Stream, because the questions section was itself numbered 10 and
@@ -2823,20 +3123,32 @@ def _rail(d: Dict[str, Any]) -> str:
     live = d.get("live") or {"turns": 0}
     # Each entry jumps to a section already on the page -- one document, not five views.
     # Anchors rather than divs: clickable without JS.
+    # Grouped, as the overhaul design has it: three labelled runs rather than one flat list.
+    # Same anchors, same one-document behaviour — the grouping is the only change, and it is
+    # there because eleven undifferentiated rows gave a reader no way to guess where anything
+    # was without reading all eleven.
     nav = "".join(
-        f"<a class='item {'on' if t == _NAV[0][2] else ''}' href='#s{t}'>"
-        f"<span class='ic'>{i}</span>{n}</a>"
-        for i, n, t in _NAV
+        f"<h4>{escape(group)}</h4>"
+        + "".join(
+            f"<a class='item {'on' if t == _NAV_FIRST else ''}' href='#s{t}'>"
+            f"<span class='ic'>{i}</span><span>{n}</span>"
+            + (f"<span class='nav-badge'>{escape(badge)}</span>" if badge else "")
+            + "</a>"
+            for i, n, t, badge in items
+        )
+        for group, items in _NAV
     )
     levers = _lever_rail(d)
     return f"""<div class='rail'>
-<div class='brand'><div class='r'><span class='mark'></span><span class='n'>ACE</span>
+<div class='brand'><div class='r'><span class='mark'>{BRAND_MARK_SVG}</span>
+<div><div class='n'>ACE</div><div class='s'>sidecar</div></div>
 <a class='gh' href='{REPO}' target='_blank' rel='noopener noreferrer'
-   title='Source on GitHub' aria-label='Source on GitHub'>{_GITHUB_ICON}</a></div>
-<div class='s'>local sidecar</div></div>
-<h4>Dashboards</h4>{nav}
-<h4>Sidecar</h4>
-{_mode_toggle(d)}
+   title='Source on GitHub' aria-label='Source on GitHub'>{_GITHUB_ICON}</a></div></div>
+<div class='ctl'><div class='h'><span class='pulse'></span>Sidecar is active</div>
+<p class='cp'>Reading local agent transcripts.<br>Nothing leaves this machine.</p>
+{_mode_toggle(d)}</div>
+<div class='side-nav'>{nav}</div>
+<h4 style='padding-left:20px'>Sidecar</h4>
 <div class='ctl'><div class='h'>Levers(PHASE 1) &mdash; headroom on your data</div>{levers}
   <div class='note-s'>{_lever_note(d)}</div>
 </div>
@@ -2884,7 +3196,14 @@ def _scorecard(tiers: List[Dict[str, Any]], billed: float, ptok: float) -> str:
     )
 
 
-def render(d: Dict[str, Any]) -> str:
+def render(d: Dict[str, Any], *, theme: str = DEFAULT_THEME) -> str:
+    """Render the dashboard. ``theme`` is one of :data:`THEMES`; anything else means auto.
+
+    Taken as a keyword rather than read out of ``d`` because ``d`` is the insights payload —
+    what the transcripts say — and a display preference is not one of its findings. Callers
+    that do not care get the default, which is to let the reader's own system decide.
+    """
+    d = {**d, "theme": resolve_theme(theme)}
     h = d["historical"]
     billed = h.get("cost_usd") or 0.0
     ptok = h.get("prompt_tokens") or 0
@@ -2896,15 +3215,33 @@ def render(d: Dict[str, Any]) -> str:
         _mask_home(p) for p in d.get("sources", {}).get("transcripts", [])
     ]
     b.append(
-        "<div class='top'><span><span class='w'>ace</span> / "
-        "<b>local</b> / "
-        f"{escape(d['range'])}</span><span class='p'>{escape(str(masked_transcripts))}"
-        "&nbsp;&nbsp;<span class='live'><i></i>LOCAL ONLY</span></span></div>"
+        "<div class='top'><span class='breadcrumbs'><span class='w'>ace</span> / "
+        "<b>local workspace</b> / "
+        f"{escape(d['range'])}</span><span class='topbar-actions'>"
+        "<span class='live'><i></i>Local only</span>"
+        + _theme_switch(d)
+        + "</span></div>"
     )
     b.append("<div class='wrap'>")
+    # The hero. New to this design and deliberately kept to things the page can stand behind:
+    # the headline states what the tool is, the three trust marks are properties of how it
+    # runs, and the diagram is the actual request path. No metric appears here that is not
+    # measured further down.
     b.append(
-        "<h1>Heterogeneous Coding Agent Observability</h1><div class='lede'>Unified observability, "
-        "cost analysis, and context efficiency across Claude Code, Antigravity (Google), & Codex (OpenAI) agents. Nothing leaves this machine.</div>"
+        "<section class='hero'><div class='hero-copy'>"
+        "<div class='eyebrow'><i></i>The local cost layer</div>"
+        "<h1>Make every <em>local</em> coding-agent<br><em>token work harder.</em></h1>"
+        "<p class='lede'>ACE reads what your agents actually sent — Claude Code, Antigravity "
+        "and Codex — and prices it against the provider's own rate card. Every figure below is "
+        "measured on this machine's transcripts, and nothing leaves it.</p>"
+        "<div class='trust'><span>🔒 Runs locally</span><span>🛡 No prompt storage</span>"
+        "<span>⚡ Drop-in proxy</span></div></div>"
+        "<div class='hero-visual'><div class='orbit orbit-one'></div>"
+        "<div class='orbit orbit-two'></div>"
+        f"<div class='orbit-core'>{BRAND_MARK_SVG}<span class='n'>ACE</span><small>sidecar</small></div>"
+        "<div class='node node-cli'>Your CLI</div>"
+        "<div class='node node-ace'>ACE<small>measure</small></div>"
+        "<div class='node node-provider'>Provider</div><div class='route route-a'></div><div class='route route-b'></div><div class='route route-c'></div></div></section>"
     )
     cur_agent = d.get("agent", "all")
     scope = "".join(
@@ -2923,9 +3260,9 @@ def render(d: Dict[str, Any]) -> str:
         )
     )
     b.append(
-        f"<div class='scope'><span class='lbl'>Time</span>{scope}"
-        f"<span class='lbl' style='margin-left:14px'>Agent Env</span>{agents_nav}"
-        f"<span class='span'>{_span_caption(d)}</span></div>"
+        "<div class='scope'><span class='lbl'>Time</span>" + scope
+        + "<span class='lbl' style='margin-left:14px'>Agent Env</span>" + agents_nav
+        + f"<span class='span'>{_span_caption(d)}</span></div>"
     )
 
     # Heterogeneous Agent Environment Section
@@ -2940,9 +3277,9 @@ def render(d: Dict[str, Any]) -> str:
         toks_v = av.get("prompt_tokens", 0) + av.get("output_tokens", 0)
         models_str = ", ".join(av.get("models") or ["—"])
         badge_style = (
-            "color:var(--mint);border-color:#1d3b2e;background:#0F231A"
+            "color:var(--mint);border-color:var(--mint-line);background:var(--mint-bg)"
             if ak == "antigravity"
-            else "color:var(--blue);border-color:#1e355b;background:#0d1c33"
+            else "color:var(--blue);border-color:var(--blue-line);background:rgba(126,220,255,.07)"
         )
         ab_cards.append(
             f"<div class='st'>"
@@ -3075,13 +3412,13 @@ def render(d: Dict[str, Any]) -> str:
                     "cache read",
                     f"{_f(cr)} · {_pct(cr/ptok if ptok else 0)}",
                     cr / ptok if ptok else 0,
-                    "var(--mint)",
+                    "var(--blue)",
                 ),
                 _bar(
                     "cache write",
                     f"{_f(cw)} · {_pct(cw/ptok if ptok else 0)}",
                     cw / ptok if ptok else 0,
-                    "var(--blue)",
+                    "var(--af-signal-violet)",
                 ),
                 _bar(
                     "fresh input",
@@ -3255,13 +3592,13 @@ def render(d: Dict[str, Any]) -> str:
 
             if is_installed:
                 b.append(
-                    f"<details class='pan' style='margin-bottom:12px;border:1px solid #1d3b2e;background:var(--surface-2);'>"
+                    f"<details class='pan' style='margin-bottom:12px;border:1px solid var(--mint-line);background:var(--surface-2);'>"
                     f"<summary class='ph' style='cursor:pointer;display:flex;align-items:center;justify-content:space-between;'>"
                     f"<span><b style='color:var(--mint);'>✓ {sk_name}</b> <code style='color:var(--ink-3);margin-left:8px;'>{sk_cmd}</code></span>"
-                    f"<span class='pill on' style='background:#0F231A;color:var(--mint);border-color:#1d3b2e;'>✓ INSTALLED ({inst_path})</span>"
+                    f"<span class='pill on' style='background:var(--mint-bg);color:var(--mint);border-color:var(--mint-line);'>✓ INSTALLED ({inst_path})</span>"
                     f"</summary><div class='pb' style='padding:14px;'>"
                     f"<p style='margin:0 0 10px;color:var(--ink-2);font-size:12.5px;'>{sk_desc}</p>"
-                    f"<pre style='margin:0;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:pre-wrap;background:var(--paper);padding:10px;border-radius:4px;'>{sk_md}</pre>"
+                    f"<pre style='margin:0;font-family:var(--mono);font-size:11.5px;color:var(--ink-3);white-space:pre-wrap;background:var(--paper);padding:10px;border-radius:0;'>{sk_md}</pre>"
                     f"</div></details>"
                 )
             else:
@@ -3272,13 +3609,13 @@ def render(d: Dict[str, Any]) -> str:
                     f"<span class='pill on'>{sk['occurrences']}x detected</span></div>"
                     f"<div class='pb' style='padding:16px;'>"
                     f"<p style='margin:0 0 12px;color:var(--ink-2);font-size:13px;'>{sk_desc}</p>"
-                    f"<div style='background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:14px;'>"
+                    f"<div style='background:var(--surface-2);border:1px solid var(--line);border-radius:0;padding:12px;margin-bottom:14px;'>"
                     f"<div style='font-family:var(--mono);font-size:11px;color:var(--ink-4);margin-bottom:6px;'>PROPOSED SKILL CONTENTS</div>"
                     f"<pre style='margin:0;font-family:var(--mono);font-size:12px;color:var(--ink-2);white-space:pre-wrap;'>{sk_md}</pre>"
                     f"</div>"
                     f"<div style='display:flex;align-items:center;justify-content:space-between;'>"
                     f"<span style='font-family:var(--mono);font-size:11.5px;color:var(--mint);'>Saves ~{tok_saved} input tokens per run</span>"
-                    f"<button onclick='installSkill(\"{sk_id}\", this)' data-sk='{sk_md}' class='btn' style='background:var(--mint);color:#04120B;font-weight:600;padding:6px 16px;border:0;border-radius:4px;cursor:pointer;'>"
+                    f"<button onclick='installSkill(\"{sk_id}\", this)' data-sk='{sk_md}' class='btn' style='background:var(--mint-fill);color:var(--on-mint);font-weight:600;padding:6px 16px;border:0;border-radius:0;cursor:pointer;'>"
                     f"⚡ Install Skill ({sk_cmd})</button>"
                     f"</div>"
                     f"</div></div>"
@@ -3332,7 +3669,7 @@ def render(d: Dict[str, Any]) -> str:
     files = d.get("files") or []
     rows = "".join(
         f"<tr><td class='m' style='color:var(--ink-3)'>{escape(_mask_home(fi['path']))}</td>"
-        f"<td><span class='pill' style='{('color:var(--mint);border-color:#1d3b2e;background:#0F231A' if fi.get('agent_type')=='antigravity' else 'color:#10a37f;border-color:#14532d;background:#052e16' if fi.get('agent_type')=='codex' else 'color:var(--blue);border-color:#1e355b;background:#0d1c33')}'>{escape(fi.get('agent_type', 'claude'))}</span></td>"
+        f"<td><span class='pill' style='{('color:var(--mint);border-color:var(--mint-line);background:var(--mint-bg)' if fi.get('agent_type')=='antigravity' else 'color:var(--af-signal-violet);border-color:rgba(170,138,255,.28);background:rgba(217,255,63,.06)' if fi.get('agent_type')=='codex' else 'color:var(--blue);border-color:var(--blue-line);background:rgba(126,220,255,.07)')}'>{escape(fi.get('agent_type', 'claude'))}</span></td>"
         f"<td class='m' style='color:var(--ink-4)'>{escape(_mask_home(fi['project'] or '—'))}</td>"
         f"<td>{escape(fi['kind'])}</td><td class='num'>{_f(fi['turns'])}</td>"
         f"<td class='num'>{_kb(fi['bytes'])}</td><td class='num'>{_ago(fi['mtime'])}</td>"
@@ -3418,11 +3755,15 @@ def render(d: Dict[str, Any]) -> str:
 
     src = d["sources"]
     b.append(
-        f"<div class='foot'>transcripts <code>{escape(str([_mask_home(p) for p in src['transcripts']]))}</code> · "
+        f"<div class='foot'><div class='foot-row'><span class='prov'>"
+        f"transcripts <code>{escape(str([_mask_home(p) for p in src['transcripts']]))}</code> · "
         f"telemetry <code>{escape(_mask_home(src['telemetry_db']) if src['telemetry_db'] else 'not wired')}</code> · "
-        f"external <b>none</b><br>Costs are Anthropic list-price valuations — on a "
+        f"external <b>none</b></span>"
+        f"<span class='foot-links'><a href='{REPO}' target='_blank' rel='noopener noreferrer'>open source</a>"
+        f"<a href='https://acefleet.dev' target='_blank' rel='noopener noreferrer'>acefleet.dev</a></span></div>"
+        f"<div class='foot-note'>Costs are Anthropic list-price valuations — on a "
         f"subscription no dollars are actually billed. Strategy figures are simulations with "
-        f"stated assumptions, not measurements. Refreshes every {REFRESH_SECONDS}s.</div>"
+        f"stated assumptions, not measurements. Refreshes every {REFRESH_SECONDS}s.</div></div>"
     )
     b.append("</div>")
 
@@ -3434,20 +3775,20 @@ def render(d: Dict[str, Any]) -> str:
       <button class='modal-close' onclick="document.getElementById('metricsModal').style.display='none'">&times;</button>
     </div>
     <div style='margin-bottom:16px;'>
-      <span class='pill on' style='background:#0F231A;color:var(--mint);border-color:#1d3b2e;'>PROMETHEUS TEXT FORMAT (v0.0.4)</span>
-      <span class='pill on' style='background:#0d1c33;color:var(--blue);border-color:#1e355b;margin-left:6px;'>OPENMETRICS COMPLIANT</span>
+      <span class='pill on' style='background:var(--mint-bg);color:var(--mint);border-color:var(--mint-line);'>PROMETHEUS TEXT FORMAT (v0.0.4)</span>
+      <span class='pill on' style='background:rgba(126,220,255,.07);color:var(--blue);border-color:var(--blue-line);margin-left:6px;'>OPENMETRICS COMPLIANT</span>
     </div>
     <p style='color:var(--ink-2);font-size:13.5px;line-height:1.55;margin-bottom:14px;'>
       The <code>/metrics</code> endpoint streams real-time counters and gauges for time-series database scraping (Prometheus, Grafana Alloy, VictoriaMetrics, OpenTelemetry Collector, Datadog Agent).
     </p>
     <div style='display:flex;gap:10px;margin-bottom:16px;align-items:center;'>
-      <input type='text' readonly id='metricsUrlInput' value='' style='flex:1;background:#0b0c0d;border:1px solid #282e30;color:var(--mint);padding:8px 12px;border-radius:4px;font-family:var(--mono);font-size:13px;' />
+      <input type='text' readonly id='metricsUrlInput' value='' style='flex:1;background:var(--af-ink-850);border:1px solid var(--line-2);color:var(--mint);padding:8px 12px;border-radius:0;font-family:var(--mono);font-size:13px;' />
       <button class='btn' style='margin:0;cursor:pointer;' onclick='copyMetricsUrl(this)'>Copy URL</button>
       <a class='btn' style='margin:0;' target='_blank' rel='noopener' href='/metrics'>Open Raw</a>
     </div>
     <div style='font-weight:600;font-size:13.5px;margin-bottom:8px;'>Scrape Configuration</div>
     <div id='modalCollectorConfig' class='calcbox' style='margin:0 0 16px 0;position:relative;'>
-      <pre id='modalCollectorCode' style='color:#a3e635;margin:0;font-family:var(--mono);font-size:12px;white-space:pre-wrap;'></pre>
+      <pre id='modalCollectorCode' style='color:var(--af-signal-lime);margin:0;font-family:var(--mono);font-size:12px;white-space:pre-wrap;'></pre>
       <button class='btn' style='position:absolute;top:10px;right:10px;padding:4px 10px;font-size:11px;cursor:pointer;' onclick='copyModalCollectorConfig(this)'>Copy Config</button>
     </div>
     <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>
@@ -3460,11 +3801,11 @@ def render(d: Dict[str, Any]) -> str:
 """
 
     return (
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<!doctype html><html lang='en'{_theme_attr(d)}><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<meta http-equiv='refresh' content='{REFRESH_SECONDS}'>"
         "<title>ACE — Local Coding Dashboard</title>"
-        + FAVICON_LINK
+        + favicon_link(resolve_theme(d.get("theme")))
         + f"<style>{_CSS}{_nav_css()}{_MODE_CSS}</style></head><body>"
         + _rail(d)
         + "<div class='main'>"
@@ -3591,9 +3932,9 @@ function formatPrometheusOutput(rawText) {
         const val = match[3];
         let row = '<span style=\"color:var(--mint);font-weight:600;\">' + escapeHtml(name) + '</span>';
         if (labels) {
-          row += '<span style=\"color:#a78bfa;\">' + escapeHtml(labels) + '</span>';
+          row += '<span style=\"color:var(--af-signal-violet);\">' + escapeHtml(labels) + '</span>';
         }
-        row += ' <span style=\"color:#fde047;font-weight:600;\">' + escapeHtml(val) + '</span>';
+        row += ' <span style=\"color:var(--af-signal-amber);font-weight:600;\">' + escapeHtml(val) + '</span>';
         out.push(row);
       } else {
         out.push(escapeHtml(line));
@@ -3747,7 +4088,7 @@ async function installSkill(skillId, btn) {
     });
     const data = await res.json();
     if (res.ok) {
-      btn.style.background = '#3ECF8E';
+      btn.style.background = 'var(--af-signal-lime)';
       btn.innerText = '✓ Installed (' + data.installed_path + ')';
       alert('✅ Skill Installed Successfully!\\n\\nLocation: ' + data.installed_path + '\\n\\nHow to Trigger:\\n' + data.trigger_instruction);
     } else {
