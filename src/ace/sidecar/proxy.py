@@ -20,6 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ace.sidecar.compression.engine import ContextOptimizer
+from ace.sidecar.routing.router import SidecarRouter
 
 log = logging.getLogger("ace.sidecar.proxy")
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -70,6 +71,7 @@ class StreamUsageTracker:
 
 def create_sidecar_app(
     optimizer: Optional[ContextOptimizer] = None,
+    router: Optional[SidecarRouter] = None,
     upstream_url: Optional[str] = None,
     api_key: Optional[str] = None,
     client: Optional[httpx.AsyncClient] = None,
@@ -77,6 +79,7 @@ def create_sidecar_app(
     """Build the standalone local sidecar FastAPI application."""
     app = FastAPI(title="ACE Local Sidecar", version="0.1.0")
     opt = optimizer or ContextOptimizer()
+    rtr = router
     base_url = upstream_url or os.environ.get("ANTHROPIC_BASE_URL", ANTHROPIC_DEFAULT_BASE_URL)
     _client = client
 
@@ -88,6 +91,7 @@ def create_sidecar_app(
         "reads_deduped": 0,
         "prose_turns_compressed": 0,
         "idle_compactions": 0,
+        "routing": rtr.stats if rtr else None,
     }
 
     def get_http_client() -> httpx.AsyncClient:
@@ -106,6 +110,7 @@ def create_sidecar_app(
             "mode": "loopback-local",
             "upstream": base_url,
             "compression_enabled": True,
+            "routing_enabled": rtr is not None,
             "stats": session_stats,
         }
 
@@ -135,6 +140,20 @@ def create_sidecar_app(
         # Apply ContextOptimizer
         opt_res = opt.optimize_request(payload)
         out_payload = opt_res.optimized_payload
+
+        # Apply Model Routing
+        route_decision = None
+        if rtr:
+            headers_dict = dict(request.headers)
+            out_payload, route_decision = rtr.route_request(out_payload, headers=headers_dict)
+            if route_decision.anchor_updated or route_decision.target_model != route_decision.original_model:
+                log.info(
+                    "[ACE sidecar] Model routed: %s -> %s (action=%s, reason=%s)",
+                    route_decision.original_model,
+                    route_decision.target_model,
+                    route_decision.action.value,
+                    route_decision.reason,
+                )
 
         session_stats["turns_processed"] += 1
         session_stats["total_saved_bytes"] += opt_res.saved_bytes
@@ -216,16 +235,23 @@ def create_sidecar_app(
                         tracker.cache_write_tokens,
                     )
 
+            resp_headers = {
+                "cache-control": "no-cache",
+                "x-accel-buffering": "no",
+                "x-ace-saved-bytes": str(opt_res.saved_bytes),
+                "x-ace-saved-tokens": str(opt_res.saved_tokens_est),
+            }
+            if route_decision:
+                resp_headers["x-ace-routed-model"] = route_decision.target_model
+                resp_headers["x-ace-original-model"] = route_decision.original_model
+                resp_headers["x-ace-routing-action"] = route_decision.action.value
+                resp_headers["x-ace-routing-reason"] = route_decision.reason
+
             return StreamingResponse(
                 stream_generator(),
                 status_code=200,
                 media_type="text/event-stream",
-                headers={
-                    "cache-control": "no-cache",
-                    "x-accel-buffering": "no",
-                    "x-ace-saved-bytes": str(opt_res.saved_bytes),
-                    "x-ace-saved-tokens": str(opt_res.saved_tokens_est),
-                },
+                headers=resp_headers,
             )
 
         # Non-streamed request
@@ -236,14 +262,20 @@ def create_sidecar_app(
                 content=out_bytes,
                 headers=forward_headers,
             )
+            non_stream_headers = {
+                "x-ace-saved-bytes": str(opt_res.saved_bytes),
+                "x-ace-saved-tokens": str(opt_res.saved_tokens_est),
+            }
+            if route_decision:
+                non_stream_headers["x-ace-routed-model"] = route_decision.target_model
+                non_stream_headers["x-ace-original-model"] = route_decision.original_model
+                non_stream_headers["x-ace-routing-action"] = route_decision.action.value
+                non_stream_headers["x-ace-routing-reason"] = route_decision.reason
             return Response(
                 content=resp.content,
                 status_code=resp.status_code,
                 media_type=resp.headers.get("content-type", "application/json"),
-                headers={
-                    "x-ace-saved-bytes": str(opt_res.saved_bytes),
-                    "x-ace-saved-tokens": str(opt_res.saved_tokens_est),
-                },
+                headers=non_stream_headers,
             )
         except Exception as e:
             return JSONResponse(

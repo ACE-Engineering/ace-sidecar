@@ -282,6 +282,49 @@ def cmd_optimize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_routing(args: argparse.Namespace) -> int:
+    """Inspect or test local model routing configuration."""
+    from ace.sidecar.routing.config import load_routing_config
+    cfg = load_routing_config()
+
+    action = getattr(args, "routing_action", "list") or "list"
+    if action == "list":
+        print("✨ ACE Model Routing Configuration:")
+        print(f"  Active Profile:    {cfg.active_profile}")
+        print(f"  Fallback Behavior: {cfg.fallback_behavior}")
+        print(f"\n  Allowed Models ({len(cfg.allowed_models)}):")
+        for m in cfg.allowed_models:
+            spec = cfg.get_model_spec(m)
+            tier_str = f"[{spec.tier.upper()}]" if spec else ""
+            print(f"    - {m} {tier_str}")
+        profile = cfg.profiles.get(cfg.active_profile)
+        if profile:
+            print(f"\n  Active Profile ('{profile.name}'):")
+            print(f"    Exploration Model: {profile.exploration_model}")
+            print(f"    Authoring Model:   {profile.authoring_model}")
+            print(f"    Reasoning Model:   {profile.reasoning_model} (thinking={profile.enable_thinking_on_reasoning})")
+        return 0
+
+    if action == "test":
+        from ace.sidecar.routing.router import SidecarRouter
+        router = SidecarRouter(config=cfg)
+        prompt = getattr(args, "prompt", "find where database is initialized")
+        payload = {
+            "model": "claude-3-7-sonnet-20250219",
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        mutated, dec = router.route_request(payload)
+        print("✨ Routing Evaluation:")
+        print(f"  Prompt:          {prompt}")
+        print(f"  Action:          {dec.action.value}")
+        print(f"  Original Model:  {dec.original_model}")
+        print(f"  Target Model:    {dec.target_model}")
+        print(f"  Reason:          {dec.reason}")
+        if dec.stripped_parameters:
+            print(f"  Stripped Params: {dec.stripped_parameters}")
+        return 0
+    return 0
+
 
 _UP_EPILOG = f"""\
 Every option above can also be set in {CONFIG_PATH} or in the environment, so the
@@ -451,6 +494,20 @@ def build_parser() -> argparse.ArgumentParser:
     opt_parser.add_argument("--max-tool-bytes", type=int, default=2048, help="tool output byte threshold")
     opt_parser.add_argument("--force-idle", action="store_true", help="simulate post-300s TTL idle compaction")
     opt_parser.set_defaults(func=cmd_optimize)
+
+    routing_parser = sub.add_parser(
+        "routing",
+        help="inspect or test model routing configuration",
+        description="Inspect allowed models, active profiles, and test routing decisions.",
+    )
+    routing_sub = routing_parser.add_subparsers(dest="routing_action", metavar="{list,test}")
+    r_list = routing_sub.add_parser("list", help="list active routing profile and allowed models")
+    r_list.set_defaults(func=cmd_routing)
+
+    r_test = routing_sub.add_parser("test", help="dry-run routing evaluation on a prompt")
+    r_test.add_argument("prompt", nargs="?", default="find where database is initialized", help="prompt text to evaluate")
+    r_test.set_defaults(func=cmd_routing)
+    routing_parser.set_defaults(func=cmd_routing)
 
     return p
 
