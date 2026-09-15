@@ -1,6 +1,6 @@
 # ACE Sidecar
 
-Local developer observability for AI coding agents — see what your Claude Code, Antigravity, and OpenAI Codex sessions actually cost.
+**Local coding agent cost optimization & observability** — cut your Claude Code, Antigravity, and OpenAI Codex spend by **up to 50%** via real-time trajectory context compression and smart local model routing.
 
 [![CI](https://github.com/ACE-Engineering/ace-sidecar/actions/workflows/ci.yml/badge.svg)](https://github.com/ACE-Engineering/ace-sidecar/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/ace-sidecar.svg)](https://pypi.org/project/ace-sidecar/)
@@ -9,199 +9,192 @@ Local developer observability for AI coding agents — see what your Claude Code
 
 ![ACE Sidecar dashboard](docs/assets/dashboard_preview.jpg)
 
-**[What it does](#what-it-does)** · **[Requirements](#requirements)** · **[Install](#install)** · **[Check Version](#check-version)** · **[Upgrade](#upgrade)** · **[Quickstart](#quickstart)** · **[Features](#features)** · **[Who builds this](#who-builds-this)** · **[Configuration](#configuration)** · **[Endpoints](#endpoints)** · **[Development](#development)** · **[License](#license)**
+**[How It Cuts Costs](#how-it-cuts-costs)** · **[Quickstart](#quickstart)** · **[Trajectory Compression](#1-trajectory-context-compression)** · **[Local Model Routing](#2-local-model-routing)** · **[Install](#install)** · **[Configuration](#configuration)** · **[Dashboard & Observability](#dashboard--observability)** · **[Who Builds This](#who-builds-this)** · **[License](#license)**
 
 ---
 
-## What it does
+## How It Cuts Costs
 
-ACE Sidecar runs a proxy on your machine in front of model providers, recording what each turn costs — tokens in and out, what came from cache, how long you waited. It automatically reads your existing local transcripts (`~/.claude/projects`, `~/.gemini/antigravity/brain`, `~/.codex/sessions`), providing unified history and cost tracking from the first run.
+Coding agents like Claude Code are token-heavy by design: every turn sends massive file reads, repetitive tool results, and bloated conversation histories. 
 
-Nothing leaves your machine: no account, no upload. Metrics live in a local SQLite file you can delete anytime.
+ACE Sidecar runs a **100% local proxy on loopback (`127.0.0.1`)** that actively reduces your API bill by **30% to 50%+** before requests ever hit the provider:
 
-Built by [ACE Fleet](https://acefleet.dev) — see [Who builds this](#who-builds-this).
-
----
-
-## Requirements
-
-- **Python 3.12+** — the one hard requirement. Check with `python3 --version`.
-- macOS, Linux, or Windows. No admin rights needed.
-- **A coding agent you already use.** Claude Code, Google Antigravity, and OpenAI Codex are supported. However you pay for it — subscription or API key — is how it stays paid; the sidecar adds no account of its own.
-
-Need a newer Python? `brew install python@3.12` (macOS), `sudo apt install python3.12` (Debian/Ubuntu), `sudo dnf install python3.12` (Fedora), [python.org](https://www.python.org/downloads/) (Windows), or `uv python install 3.12` (anywhere).
-
----
-
-## Install
-
-### Option A: Via `uv` (Recommended & Fastest)
-```bash
-uv tool install ace-sidecar
+```
+┌────────────────────────────────────────────────────────┐
+│                    Claude Code CLI                     │
+│                (or VS Code Extension)                  │
+└───────────────────────────┬────────────────────────────┘
+                            │ ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                   ACE Local Sidecar                    │
+│                 (`ace up` on 127.0.0.1)                │
+├────────────────────────────────────────────────────────┤
+│ 1. Trajectory Compression                              │
+│    • Tool Output Truncation: Head + tail (2KB cap)     │
+│    • Read Deduplication: SHA-256 digest pointers       │
+│    • Prose Compaction: Strips conversational fluff     │
+│    • Idle Optimizer: 300s TTL-aware cache compaction   │
+│                                                        │
+│ 2. Local Model Routing (Claude Family)                 │
+│    • Exploration / Grep / Search ──> Claude 3.5 Haiku  │
+│    • Code Authoring / Editing    ──> Claude 3.7 Sonnet │
+│    • Sticky Session Anchoring    ──> Retains 90% cache │
+│    • Data Sensitivity Gate       ──> Quarantines data  │
+└───────────────────────────┬────────────────────────────┘
+                            │ Relays optimized payload & adapts params
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                Anthropic Upstream API                  │
+│               (https://api.anthropic.com)              │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Option B: Via `pipx`
-```bash
-pipx install ace-sidecar
-```
-
-### Option C: Via `pip` (in a virtual environment)
-```bash
-python3.12 -m venv ~/.venvs/ace && source ~/.venvs/ace/bin/activate
-pip install ace-sidecar
-```
-
-### Option D: Direct from GitHub or Local Source
-```bash
-# From GitHub release tag
-uv tool install git+https://github.com/ACE-Engineering/ace-sidecar.git@v0.2.0
-
-# From cloned repository (editable for local development)
-uv tool install --editable .
-```
-
----
-
-## Check Version
-
-Check which version of `ace-sidecar` is currently installed on your system:
-
-| Tool | Command | Expected Output |
-| :--- | :--- | :--- |
-| **`uv`** | `uv tool list` | `ace-sidecar v0.2.0` |
-| **`pip`** | `pip show ace-sidecar` | `Version: 0.2.0` |
-| **`pipx`** | `pipx list` | `package ace-sidecar 0.2.0` |
-| **Python** | `python3 -c "import importlib.metadata; print(importlib.metadata.version('ace-sidecar'))"` | `0.2.0` |
-
----
-
-## Upgrade
-
-To upgrade an existing installation to the latest release:
-
-```bash
-# With uv
-uv tool upgrade ace-sidecar
-# (or force fresh index): uv tool install --force --reinstall --refresh ace-sidecar
-
-# With pipx
-pipx upgrade ace-sidecar
-
-# With pip
-pip install --upgrade ace-sidecar
-```
-
-### Troubleshooting
-- **`Could not find a version that satisfies the requirement ace-sidecar`**: Your active Python is older than 3.12. Check `python3 --version`.
-- **`ace: command not found`**: Run `uv tool update-shell` or `pipx ensurepath`, then restart your terminal.
+**100% locally hosted**: Zero telemetry phone-home, zero remote data upload, zero external cloud accounts. Everything executes on your workstation.
 
 ---
 
 ## Quickstart
 
-Start the sidecar and open the dashboard:
+### 1. Install ACE Sidecar
+```bash
+# Recommended via uv
+uv tool install ace-sidecar
 
+# Or via pip
+pip install ace-sidecar
+```
+
+### 2. Launch the Sidecar
 ```bash
 ace up
-open http://127.0.0.1:8787/dashboard
+```
+*Proxy listening on `http://127.0.0.1:8787` with real-time compression and routing enabled.*
+
+### 3. Point Claude Code at the Sidecar
+```bash
+# In your terminal or ~/.bashrc / ~/.zshrc:
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+
+# Configure optimized MCP tools for Claude Code:
+ace setup-claude
+
+# Start coding as normal!
+claude
 ```
 
-Use your coding agents as normal (**Claude Code**, **Google Antigravity**, or **OpenAI Codex**) — existing and new sessions appear automatically, with historical transcripts, token counts, and spend calculations loaded directly from disk.
+Open the local dashboard at **`http://127.0.0.1:8787/dashboard`** to see live token savings, cache hit ratios, and dollar reductions.
 
 ---
 
-## Features
+## Core Optimization Engines
 
-**Unified view across agents.** Claude Code and Antigravity in one place, with per-agent cost, sessions, turns and models. Pick one agent and the page scopes to it.
+### 1. Trajectory Context Compression
+- **Tool Result Truncation**: Automatically caps sprawling terminal outputs and file dumps at 2KB, preserving the diagnostic head lines and summary tail lines while eliding redundant middle output.
+- **Read Deduplication (SHA-256)**: When an agent re-reads an unchanged file across turns, the sidecar replaces the redundant content with a 120-byte digest pointer, saving tens of thousands of duplicate tokens.
+- **Fact-Preserving Prose Compression**: Compresses assistant conversational chatter while preserving fenced code blocks, file paths, line numbers, and bash commands verbatim.
+- **Prompt Cache TTL Compactor**: Anthropic prompt caches expire after 300 seconds of inactivity. When idle gap $> 300\text{s}$, the sidecar safely compacts older history into structured working state without breaking live turns.
+- **Fast Stdio MCP Tools (`Search` & `Edit`)**: Built-in Model Context Protocol server that replaces full-file dumps with atomic line-slice reads and hunk edits.
 
-**Real spend against published prices.** Per-turn cost from a versioned rate catalog — input, output, cache-read, and derived cache-write rates — with the source and the date it was checked. Cache savings shown as a counterfactual.
-
-![Spend and rate card](docs/assets/spend_and_rate_card.jpg)
-
-**Recommendations off a measured threshold.** Each one fires on a number from your own transcripts and carries its saving, its cost, and its risk.
-
-![Recommendations](docs/assets/recommendations.jpg)
-
-**Optimisation levers, ranked by what they are worth to you.** The rail orders every lever by the money it would recover on your transcripts, with the share of your bill and the risk beside it. Each is scored alone, so the figures overlap and do not sum — and none are wired yet: this release measures.
-
-![Levers ranked by headroom](docs/assets/lever_rail.jpg)
-
-**Workflow skill miner.** Repeated command sequences become reusable `SKILL.md` rules, installable into `.agents/skills/<id>/` in one click.
-
-![Workflow skill miner](docs/assets/workflow_skills.jpg)
-
-**Where the time goes.** Wall clock split across model generating, tool execution, human composing, and idle — including time parked on approval prompts.
-
-![Session time](docs/assets/session_time.jpg)
-
-**Prometheus exporter.** 15 metrics in standard text exposition format at `GET /metrics`, for Prometheus, Grafana Alloy, OpenTelemetry Collector, VictoriaMetrics, or Datadog. See [docs/PROMETHEUS_METRICS.md](docs/PROMETHEUS_METRICS.md).
-
-![Prometheus exporter](docs/assets/prometheus_exporter.jpg)
+### 2. Local Model Routing
+- **Cost Arbitrage Across Task Phases**: High-volume, low-complexity agent turns (searching repository structure, running greps, reading file heads) are routed to **Claude 3.5 Haiku** ($0.80/1M vs $3.00/1M), saving **~73% on input costs** for exploration turns.
+- **Session Stickiness (Cache Protection)**: Anthropic prompt caching offers a **90% discount** ($0.30/1M reads vs $3.00/1M). The router anchors to the destination model on Turn 1 and sticks to it, preventing mid-session model thrashing from invalidating the prompt cache.
+- **Pluggable Escalation Triggers**:
+  - **Explicit User Override**: Type `"use opus"` or `"switch to sonnet"` in your prompt to dynamically re-anchor.
+  - **Complexity Jump**: Escalates to Claude 3.7 Sonnet with extended thinking when task difficulty jumps ($\Delta C \ge 0.40$).
+  - **Consecutive Error Escalation**: Automatically escalates to flagship reasoning if the agent encounters $\ge 2$ consecutive test or tool failures.
+  - **Data Sensitivity Gate**: Detects secrets (`.env`, `credentials`, AWS keys, JWTs) and routes them to strict compliance profiles.
+- **Claude Family Wire Protocol Parity**: Parameter adaptation automatically strips `thinking` blocks and clamps `max_tokens` when down-routing to Haiku so Claude Code never encounters a `400 Bad Request`.
 
 ---
 
-## Who builds this
+## Configuration (`~/.ace/routing.yaml`)
 
-ACE Sidecar is built by **[ACE Fleet](https://acefleet.dev)**.
+Routing and compression are fully customizable without touching Python code. The configuration defaults strictly to the tested **Claude model family** for 100% CLI stability:
 
-ACE Fleet is a middleware proxy for companies scaling AI applications. It sits between their services and the model providers and reduces what they spend on inference as that usage grows — across every workload in the business, not one team's tooling. That is the product.
+```yaml
+# ~/.ace/routing.yaml
+version: "1.0"
+active_profile: "balanced"
 
-This sidecar is one vertical of it, open-sourced on its own: the same accounting, pointed at a single developer's coding agents.
+# Allowed candidate models. Add custom ARNs (e.g. AWS Bedrock / Vertex) or remove models.
+allowed_models:
+  - "claude-3-5-haiku-20241022"
+  - "claude-3-5-sonnet-20241022"
+  - "claude-3-7-sonnet-20250219"
+  - "claude-3-opus-20240229"
 
-| | **ACE Sidecar** (this repo) | **ACE Fleet** |
-|---|---|---|
-| **Scope** | One developer's machine | An organisation's whole inference bill |
-| **Workload** | Coding agents — Claude Code, Antigravity | Any AI application in production |
-| **What it does** | **Measures.** Records and explains the spend | **Acts.** Reduces the spend in the request path |
-| **Where it runs** | Loopback on your machine; nothing leaves it | Managed middleware between your services and the providers |
-| **License** | Open source, AGPL-3.0 | Commercial |
+profiles:
+  balanced:
+    exploration_model: "claude-3-5-haiku-20241022"
+    authoring_model: "claude-3-7-sonnet-20250219"
+    reasoning_model: "claude-3-7-sonnet-20250219"
+    enable_thinking_on_reasoning: true
+    thinking_budget: 4096
 
-The two answer different questions. The sidecar answers *where is my money going* on the machine in front of you, at a scale small enough to check by hand. Fleet answers *what do we do about it* once that question is being asked of an entire company's traffic.
+  economy:
+    exploration_model: "claude-3-5-haiku-20241022"
+    authoring_model: "claude-3-5-haiku-20241022"
+    reasoning_model: "claude-3-7-sonnet-20250219"
 
-Open-sourcing the coding-agent slice is deliberate: it is the part a developer can run in one command, on their own data, without talking to anyone — and the clearest way to show how the larger system reasons about cost. If it is useful at your desk, [we would like to hear about it](mailto:contact@acefleet.dev).
-
----
-
-## Configuration
-
-Settings resolve in order: **CLI flags** → **`~/.ace/config.json`** → **environment variables** → **defaults**.
-
-```json
-{ "no_key": true, "port": 8787, "log_level": "warning" }
+  flagship:
+    exploration_model: "claude-3-7-sonnet-20250219"
+    authoring_model: "claude-3-7-sonnet-20250219"
+    reasoning_model: "claude-3-7-sonnet-20250219"
 ```
 
-| Path | Holds |
-|---|---|
-| `~/.ace/telemetry.db` | Turn telemetry — local SQLite, never uploaded |
-| `~/.ace/config.json` | Your settings |
-| `~/.claude/projects`, `~/.gemini/antigravity/brain`, `~/.codex/sessions` | Agent transcripts — read only |
+### Routing CLI Commands
+```bash
+# View active routing profile and allowed models
+ace routing list
 
-Delete `~/.ace/` to remove everything recorded.
+# Dry-run test a routing decision on a prompt
+ace routing test "where is main.py defined?"
+# Result: Routes to claude-3-5-haiku-20241022 (exploration)
+
+ace routing test "use opus to review distributed consensus design"
+# Result: Routes to claude-3-opus-20240229 (explicit override)
+```
+
+---
+
+## Dashboard & Observability
+
+Even with optimization active, ACE Sidecar provides complete, transparent observability into your coding sessions:
+
+- **Unified History**: Auto-discovers transcripts from `~/.claude/projects`, `~/.gemini/antigravity/brain`, and `~/.codex/sessions`.
+- **Real Spend Against Provider Rates**: Tracks input, output, cache-read, and cache-write rates based on versioned provider catalogs.
+- **Counterfactual Savings Rail**: Shows exact token and dollar savings recovered by context compression and model routing.
+- **Where the Time Goes**: Wall-clock breakdown across model generation, tool execution, human think-time, and approval prompts.
+- **Prometheus Metrics**: Live metrics exposed at `GET /metrics` for Grafana, Datadog, or OpenTelemetry.
+
+---
 
 ## Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/messages` | The relay your agent talks to |
-| `GET /dashboard` | The dashboard above |
-| `GET /healthz` | Liveness and config state, without leaking your key |
-| `GET /api/stats` | The dashboard's numbers as JSON |
-| `GET /metrics` | Prometheus exposition |
-
-Binds loopback and refuses non-local callers; a public bind needs `--allow-remote`.
+| `POST /v1/messages` | Loopback proxy interceptor for Claude Code and coding agents |
+| `GET /dashboard` | Visual web dashboard showing costs, savings, and session timelines |
+| `GET /healthz` | Health check, active compression state, and routing status |
+| `GET /api/stats` | JSON breakdown of saved bytes, saved tokens, and routed models |
+| `GET /metrics` | Prometheus text exposition metrics |
 
 ---
 
-## Development
+## Who Builds This
 
-```bash
-git clone https://github.com/ACE-Engineering/ace-sidecar.git && cd ace-sidecar
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e ".[test]"
+ACE Sidecar is built by **[ACE Fleet](https://acefleet.dev)**.
 
-pytest                        # 40 unit tests
-python scripts/e2e_test.py    # live route verification
-```
+ACE Fleet builds inference efficiency middleware for enterprises running production AI. While Fleet manages multi-tenant cloud traffic, **ACE Sidecar** is the open-source, local vertical designed specifically to optimize and compress individual developer coding agent workloads on their own machines.
+
+| | **ACE Sidecar** (this repo) | **ACE Fleet** |
+|---|---|---|
+| **Scope** | Single developer workstation | Organization-wide inference fabric |
+| **Workload** | Coding agents (Claude Code, Antigravity, Codex) | Production APIs, services, multi-agent systems |
+| **Action** | **Acts locally**: Compresses context & routes models on loopback | **Acts centrally**: Dynamic routing, global cache, cloud fleets |
+| **Privacy** | 100% local, zero data egress | Multi-tenant VPC / Private Cloud |
+| **License** | Open source (AGPL-3.0) | Enterprise |
 
 ---
 

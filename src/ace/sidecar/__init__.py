@@ -25,5 +25,7 @@ reason to churn their imports.
 """
 
 from ace.sidecar.app import build_sidecar_app
+from ace.sidecar.proxy import create_sidecar_app
+from ace.sidecar.routing import SidecarRouter
 
-__all__ = ["build_sidecar_app"]
+__all__ = ["build_sidecar_app", "create_sidecar_app", "SidecarRouter"]

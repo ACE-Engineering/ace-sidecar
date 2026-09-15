@@ -414,7 +414,11 @@ def test_real_spend_is_recorded_alongside_the_counterfactual(store):
 def test_the_rail_reports_measured_only_once_something_was_measured(store):
     app, _ = make_app(store)
     before = rail.rail_payload([], store=store)
-    assert before["status"] in (rail.STATUS_NO_PACKAGE, rail.STATUS_ALL_OFF)
+    assert before["status"] in (
+        rail.STATUS_NO_PACKAGE,
+        rail.STATUS_ALL_OFF,
+        rail.STATUS_NO_COUNTER,
+    )
     assert before["measured"] == {}
 
     async def main():

@@ -12,8 +12,23 @@ from ace.sidecar import build_sidecar_app
 
 @pytest.fixture
 def mock_codex_sessions(tmp_path):
+    import datetime
+
     codex_dir = tmp_path / "codex" / "sessions"
     codex_dir.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    ts1 = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts1_end = (now - datetime.timedelta(days=2, seconds=-5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts1_tool = (now - datetime.timedelta(days=2, seconds=-6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    ts2 = (now - datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts2_end = (now - datetime.timedelta(days=1, seconds=-8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    ts3_0 = (now - datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.163Z")
+    ts3_1 = (now - datetime.timedelta(hours=2, seconds=-1)).strftime("%Y-%m-%dT%H:%M:%S.502Z")
+    ts3_2 = (now - datetime.timedelta(hours=2, seconds=-7)).strftime("%Y-%m-%dT%H:%M:%S.593Z")
+    ts3_3 = (now - datetime.timedelta(hours=2, seconds=-8)).strftime("%Y-%m-%dT%H:%M:%S.827Z")
 
     # 1. JSONL format session
     session_jsonl = codex_dir / "session_123.jsonl"
@@ -21,7 +36,7 @@ def mock_codex_sessions(tmp_path):
         {
             "role": "user",
             "content": "Implement user authentication with JWT",
-            "timestamp": "2026-08-10T10:00:00Z",
+            "timestamp": ts1,
             "cwd": "/workspace/auth-service",
         },
         {
@@ -44,13 +59,13 @@ def mock_codex_sessions(tmp_path):
                 "completion_tokens": 250,
                 "prompt_tokens_details": {"cached_tokens": 800},
             },
-            "timestamp": "2026-08-10T10:00:05Z",
+            "timestamp": ts1_end,
         },
         {
             "role": "tool",
             "tool_call_id": "call_jwt_1",
             "content": "File written successfully",
-            "timestamp": "2026-08-10T10:00:06Z",
+            "timestamp": ts1_tool,
         },
     ]
     with open(session_jsonl, "w", encoding="utf-8") as f:
@@ -66,7 +81,7 @@ def mock_codex_sessions(tmp_path):
             {
                 "role": "user",
                 "content": "Refactor stripe payment handler",
-                "timestamp": "2026-08-11T12:00:00Z",
+                "timestamp": ts2,
             },
             {
                 "role": "assistant",
@@ -77,7 +92,7 @@ def mock_codex_sessions(tmp_path):
                     "completion_tokens": 150,
                     "prompt_tokens_details": {"cached_tokens": 300},
                 },
-                "timestamp": "2026-08-11T12:00:08Z",
+                "timestamp": ts2_end,
             },
         ],
     }
@@ -88,7 +103,7 @@ def mock_codex_sessions(tmp_path):
     rollout_jsonl = codex_dir / "rollout_session_789.jsonl"
     rollout_lines = [
         {
-            "timestamp": "2026-08-27T16:33:16.163Z",
+            "timestamp": ts3_0,
             "ordinal": 0,
             "type": "session_meta",
             "payload": {
@@ -100,7 +115,7 @@ def mock_codex_sessions(tmp_path):
             },
         },
         {
-            "timestamp": "2026-08-27T16:33:16.502Z",
+            "timestamp": ts3_1,
             "ordinal": 5,
             "type": "response_item",
             "payload": {
@@ -110,7 +125,7 @@ def mock_codex_sessions(tmp_path):
             },
         },
         {
-            "timestamp": "2026-08-27T16:33:23.593Z",
+            "timestamp": ts3_2,
             "ordinal": 14,
             "type": "response_item",
             "payload": {
@@ -122,7 +137,7 @@ def mock_codex_sessions(tmp_path):
             },
         },
         {
-            "timestamp": "2026-08-27T16:33:23.827Z",
+            "timestamp": ts3_3,
             "ordinal": 17,
             "type": "event_msg",
             "payload": {
