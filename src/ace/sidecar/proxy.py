@@ -120,7 +120,7 @@ def create_sidecar_app(
 
     @app.get("/dashboard", response_class=HTMLResponse)
     @app.get("/", response_class=HTMLResponse)
-    async def dashboard(range: str = "30d", agent: str = "all", privacy: bool = False) -> Any:
+    async def dashboard(range: str = "30d", agent: str = "all", privacy: bool = False, theme: str = "auto") -> Any:
         try:
             from ace.sidecar.dashboard_render import render
             from ace.sidecar.insights import DEFAULT_RANGE, RANGES, build
@@ -136,7 +136,7 @@ def create_sidecar_app(
                 except Exception:
                     pass
 
-            html = render(build(store=store, range_key=key, agent=agent))
+            html = render(build(store=store, range_key=key, agent=agent), theme=theme)
             if privacy:
                 privacy_style = """
                 <style>
@@ -151,7 +151,7 @@ def create_sidecar_app(
                 </style>
                 """
                 html = html.replace("</head>", f"{privacy_style}</head>")
-                html = html.replace("• LOCAL ONLY", "🔒 PRIVACY MODE · PII MASKED")
+                html = html.replace("Local only", "🔒 PRIVACY MODE · PII MASKED")
             return HTMLResponse(html)
         except Exception as e:
             return HTMLResponse(f"<h1>Dashboard Error</h1><pre>{e}</pre>")
