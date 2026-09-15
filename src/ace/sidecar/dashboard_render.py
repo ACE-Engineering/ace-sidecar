@@ -423,11 +423,20 @@ min-width:230px;padding:11px 12px;border:1px solid var(--olive);background:var(-
 border-radius:var(--radius)}
 .command-box code{color:var(--olive-text);font-family:var(--mono);font-size:10px}
 .command-box .cp{color:var(--olive)}
-.foot{display:flex;justify-content:space-between;align-items:center;gap:16px;
-color:var(--ink-faint);font-family:var(--mono);font-size:9px;padding:27px 0 6px;
-border-top:1px solid var(--line);margin-top:30px;flex-wrap:wrap}
+/* The footer carries provenance, not marketing: which files were read, whether telemetry is
+   wired, and what left the machine. The design's two-column form holds it — facts on the
+   left, links on the right — but `.foot` itself must stay a BLOCK. Flexing the container
+   directly spread each inline span to the page edges, because these are one flowing sentence
+   and not a row of items. */
+.foot{color:var(--ink-faint);font-family:var(--mono);font-size:9px;padding:27px 0 6px;
+border-top:1px solid var(--line);margin-top:30px}
+.foot-row{display:flex;justify-content:space-between;align-items:baseline;gap:20px;flex-wrap:wrap}
+.foot-row .prov{flex:1;min-width:280px;line-height:1.9}
+.foot-links{display:flex;gap:16px;white-space:nowrap}
 .foot a{color:var(--olive-text)}
 .foot a:hover{text-decoration:underline}
+.foot-note{color:var(--ink-faint);font-family:var(--sans);font-size:11px;line-height:1.55;
+margin-top:12px;max-width:80ch}
 
 @media (max-width:1120px){.wrap{padding-left:26px;padding-right:26px}.top{padding:0 26px}
 .hero-visual{display:none}.hero{gap:10px;min-height:0}}
@@ -583,48 +592,50 @@ font-size:12px}
 /* ---- § 10 about / contact. Cards rather than a paragraph: what ACE is, how to reach the
    team, and how to share it are independent errands. Same border/surface vocabulary as .pan
    so it reads as part of the page, not an ad. */
-.tag{border:1px solid var(--mint-line);border-radius:var(--radius);padding:22px 24px;margin-top:14px;
-background:radial-gradient(circle at 10% 20%, rgba(15,35,26,0.7) 0%, rgba(10,12,13,0.95) 90%);
-box-shadow:0 8px 32px -8px rgba(0,0,0,0.5), inset 0 1px 0 var(--olive);position:relative;overflow:hidden}
+.tag{border:1px solid var(--olive);border-radius:var(--radius);padding:22px 24px;margin-top:14px;
+background:linear-gradient(110deg,var(--olive-tint) 0%,var(--card) 58%,var(--card) 100%);
+box-shadow:var(--shadow);position:relative;overflow:hidden}
 .tag::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
 background:linear-gradient(90deg,transparent,var(--olive),transparent)}
-.tag .t{font-size:clamp(1.05rem,2vw,1.3rem);font-weight:700;letter-spacing:-.02em;
-background:linear-gradient(135deg,var(--af-paper-100) 0%,var(--af-paper-55) 100%);-webkit-background-clip:text;
--webkit-text-fill-color:transparent;text-wrap:balance}
-.tag p{margin:10px 0 0;color:var(--ink-2);font-size:13.5px;line-height:1.65;max-width:76ch}
+.tag .t{font-family:var(--display);font-size:clamp(1.05rem,2vw,1.35rem);font-weight:600;
+letter-spacing:-.04em;color:var(--ink);text-wrap:balance}
+.tag p{margin:10px 0 0;color:var(--ink-soft);font-size:13px;line-height:1.65;max-width:76ch}
 .cards{display:grid;gap:14px;margin-top:14px;
 grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
-.card{border:1px solid var(--line-dark);background:rgba(18,22,23,0.75);backdrop-filter:blur(12px);
-border-radius:var(--radius);padding:20px 22px 22px;display:flex;flex-direction:column;position:relative;
-transition:all .25s cubic-bezier(0.16,1,0.3,1);box-shadow:0 4px 16px rgba(0,0,0,0.3)}
-.card:hover{border-color:var(--olive);transform:translateY(-3px);
-box-shadow:0 12px 28px -6px var(--olive),0 4px 16px rgba(0,0,0,0.4)}
-.card .k{font-family:var(--mono);color:var(--ink-4);font-size:9.5px;letter-spacing:.13em;
+.card{border:1px solid var(--line);background:var(--card);border-radius:var(--radius);
+padding:20px 22px 22px;display:flex;flex-direction:column;position:relative;
+box-shadow:var(--shadow-sm);transition:border-color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.card:hover{border-color:var(--olive);transform:translateY(-3px)}
+.card .k{font-family:var(--mono);color:var(--ink-faint);font-size:9.5px;letter-spacing:.13em;
 text-transform:uppercase;margin-bottom:10px}
-.card h3{margin:4px 0 8px;font-size:14.5px;color:var(--ink);font-weight:600;letter-spacing:-.01em}
-.card p{margin:0 0 16px;color:var(--ink-3);font-size:13px;line-height:1.6;flex:1}
+.card h3{margin:4px 0 8px;font-size:14px;color:var(--ink);font-weight:600;letter-spacing:-.01em}
+.card p{margin:0 0 16px;color:var(--ink-soft);font-size:12.5px;line-height:1.6;flex:1}
 /* Spacing between glyph and label is `gap`, not a margin on the arrow: the arrow slides on
    hover, and a transformed element with a margin drags the gap along with it. break-all is
    deliberately not used — it would split "acefleet.dev" mid-word — but the mail buttons still
    have to survive a long address in a 270px card, so wrapping is allowed anywhere only once a
    word genuinely cannot fit. */
 .lk{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);
-font-size:12px;line-height:1.2;color:var(--mint);background:rgba(217,255,63,.07);
-border:1px solid var(--mint-line);border-radius:var(--radius);padding:9px 14px;text-decoration:none;
-overflow-wrap:anywhere;
-transition:background .2s ease,border-color .2s ease,color .2s ease,box-shadow .2s ease,transform .2s ease}
-.lk:hover{background:rgba(217,255,63,.14);border-color:var(--mint);color:var(--af-paper-100);
-box-shadow:0 0 12px var(--mint-line);transform:translateY(-1px)}
-.lk:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+font-size:12px;line-height:1.2;color:var(--olive-text);background:var(--olive-tint);
+border:1px solid var(--olive);border-radius:var(--radius);padding:9px 14px;overflow-wrap:anywhere;
+transition:background var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.lk:hover{background:var(--olive-light);transform:translateY(-1px)}
+.lk:focus-visible{outline:2px solid var(--olive-text);outline-offset:2px}
 .lk:active{transform:translateY(0)}
-.lk .arw{transition:transform .2s ease}
+.lk .arw{transition:transform var(--dur) var(--ease)}
 .lk:hover .arw{transform:translateX(3px)}
-/* The one outbound link on the page, so it carries more weight than the mail buttons. */
-.site-lk{background:linear-gradient(135deg,var(--olive) 0%,var(--olive) 100%);
-border-color:var(--olive);color:var(--af-paper-100);font-weight:600;font-size:12.5px;padding:11px 18px;
-box-shadow:0 2px 10px -2px var(--olive)}
-.site-lk:hover{background:linear-gradient(135deg,var(--olive) 0%,rgba(217,255,63,.14) 100%);
-box-shadow:0 6px 18px -4px var(--olive)}
+/* The one outbound link on the page, so it carries more weight than the mail buttons: a
+   filled button rather than an outlined one.
+
+   Its text is `--on-olive`, NOT `--ink`. The fill is a light olive in BOTH themes, so text
+   that inverts with the page lands white-on-lime in dark and is unreadable — which is exactly
+   what happened when this rule was carried over from the old stylesheet, where a translucent
+   tint got mapped to an opaque fill and the colour underneath stopped being a background. */
+.site-lk{background:var(--primary);border-color:var(--primary);color:var(--on-olive);
+font-weight:600;font-size:12.5px;padding:11px 18px;
+box-shadow:0 6px 15px color-mix(in srgb,var(--primary) 22%,transparent)}
+.site-lk:hover{background:var(--olive);border-color:var(--olive);color:var(--on-olive);
+transform:translateY(-2px)}
 /* ---- modal drawer ---- */
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);backdrop-filter:blur(6px);z-index:9999;justify-content:center;align-items:center}
 .modal-content{background:var(--af-ink-850);border:1px solid var(--line-2);border-radius:var(--radius);width:92%;max-width:820px;max-height:88vh;overflow-y:auto;padding:24px;color:var(--ink);box-shadow:0 24px 48px rgba(0,0,0,0.6)}
@@ -1515,29 +1526,29 @@ def _refs(d: Dict[str, Any]) -> Dict[str, Any]:
 
 _MODE_CSS = """
 .ref{display:flex;gap:6px;align-items:center;margin-top:5px;font:10px/1.4 ui-monospace,monospace}
-.ref .rk{padding:1px 5px;border-radius:0;letter-spacing:.04em;font-size:9px;
-  background:rgba(217,255,63,.08);color:var(--af-signal-lime);border:1px solid rgba(217,255,63,.30)}
+.ref .rk{padding:1px 5px;border-radius:var(--radius);letter-spacing:.04em;font-size:9px;
+  background:var(--olive-tint);color:var(--olive-text);border:1px solid var(--olive)}
 .ref.peer .rk{background:rgba(126,220,255,.08);color:var(--af-signal-cyan);border-color:rgba(126,220,255,.28)}
 .ref.published .rk{background:rgba(170,138,255,.10);color:var(--af-signal-violet);border-color:rgba(170,138,255,.24)}
-.ref.measured .rk{background:rgba(217,255,63,.08);color:var(--af-signal-lime);border-color:rgba(217,255,63,.30)}
+.ref.measured .rk{background:var(--olive-tint);color:var(--olive-text);border-color:var(--olive)}
 .ref.none .rk{background:rgba(255,206,107,.07);color:var(--af-signal-amber);border-color:rgba(255,206,107,.16)}
 .ref .rv{color:var(--af-status-off);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ref.none .rv{color:var(--af-paper-32);font-style:italic}
 .imp{display:none}
 body.m-shadow .imp.on,body.m-prod .imp.on{display:flex;gap:6px;align-items:center;
   margin-top:5px;font:10px/1.4 ui-monospace,monospace;cursor:help}
-.imp .ik{padding:1px 5px;border-radius:0;font-size:9px;letter-spacing:.04em;
+.imp .ik{padding:1px 5px;border-radius:var(--radius);font-size:9px;letter-spacing:.04em;
   background:rgba(126,220,255,.09);color:var(--af-signal-cyan);border:1px solid rgba(126,220,255,.26)}
 body.m-prod .imp .ik{background:rgba(255,206,107,.08);color:var(--af-signal-amber);border-color:rgba(255,206,107,.28)}
 .imp .iv{color:var(--af-signal-cyan)}
 .imp.flat .ik{background:var(--af-ink-800);color:var(--af-status-off);border-color:var(--line-2)}
 .imp.flat .iv{color:var(--af-status-off);font-style:italic;white-space:normal;line-height:1.4}
 body.m-prod .imp .iv{color:var(--af-signal-amber)}
-.modebar{display:flex;gap:0;margin:4px 0 2px;border:1px solid var(--line-2);border-radius:0;
+.modebar{display:flex;gap:0;margin:4px 0 2px;border:1px solid var(--line-2);border-radius:var(--radius);
   overflow:hidden;background:var(--af-ink-850)}
 .modebar button{flex:1;padding:5px 0;background:transparent;border:0;cursor:pointer;
   color:var(--af-status-off);font:10px/1 ui-monospace,monospace;letter-spacing:.06em}
-.modebar button.on{background:rgba(217,255,63,.08);color:var(--af-signal-lime)}
+.modebar button.on{background:var(--olive-tint);color:var(--olive-text)}
 .modebar button.on[data-mode=prod]{background:rgba(255,206,107,.08);color:var(--af-signal-amber)}
 .modebar button:hover:not(.on){color:var(--af-paper-80);background:var(--af-ink-800)}
 .lvh{font:9px/1.4 ui-monospace,monospace;color:var(--af-status-off);letter-spacing:.08em;text-transform:uppercase;margin:9px 0 4px;padding-top:8px;border-top:1px solid var(--af-ink-800)}
@@ -1547,7 +1558,7 @@ body.m-prod .imp .iv{color:var(--af-signal-amber)}
    the attribution -- the struck pair says how big, the badge says why and by whom. */
 .st .v .was{display:block;font-size:.56em;font-weight:600;line-height:1.3;
   color:var(--ink-4);text-decoration:line-through;text-decoration-thickness:1px;
-  text-decoration-color:rgba(255,255,255,0.34)}
+  text-decoration-color:var(--line-dark)}
 .st .v .now{display:block;color:var(--mint)}
 .st .v .now .pc{font-family:var(--mono);font-size:.46em;font-weight:600;letter-spacing:.01em;
   margin-left:.5em;color:var(--mint);opacity:.72}
@@ -3740,11 +3751,15 @@ def render(d: Dict[str, Any], *, theme: str = DEFAULT_THEME) -> str:
 
     src = d["sources"]
     b.append(
-        f"<div class='foot'>transcripts <code>{escape(str([_mask_home(p) for p in src['transcripts']]))}</code> · "
+        f"<div class='foot'><div class='foot-row'><span class='prov'>"
+        f"transcripts <code>{escape(str([_mask_home(p) for p in src['transcripts']]))}</code> · "
         f"telemetry <code>{escape(_mask_home(src['telemetry_db']) if src['telemetry_db'] else 'not wired')}</code> · "
-        f"external <b>none</b><br>Costs are Anthropic list-price valuations — on a "
+        f"external <b>none</b></span>"
+        f"<span class='foot-links'><a href='{REPO}' target='_blank' rel='noopener noreferrer'>open source</a>"
+        f"<a href='https://acefleet.dev' target='_blank' rel='noopener noreferrer'>acefleet.dev</a></span></div>"
+        f"<div class='foot-note'>Costs are Anthropic list-price valuations — on a "
         f"subscription no dollars are actually billed. Strategy figures are simulations with "
-        f"stated assumptions, not measurements. Refreshes every {REFRESH_SECONDS}s.</div>"
+        f"stated assumptions, not measurements. Refreshes every {REFRESH_SECONDS}s.</div></div>"
     )
     b.append("</div>")
 
