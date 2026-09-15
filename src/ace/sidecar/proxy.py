@@ -17,7 +17,7 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from ace.sidecar.compression.engine import ContextOptimizer
 from ace.sidecar.routing.router import SidecarRouter
@@ -117,6 +117,44 @@ def create_sidecar_app(
     @app.get("/api/stats")
     async def stats() -> Dict[str, Any]:
         return {"status": "ok", "stats": session_stats}
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard(range: str = "30d", agent: str = "all", privacy: bool = False) -> Any:
+        try:
+            from ace.sidecar.dashboard_render import render
+            from ace.sidecar.insights import DEFAULT_RANGE, RANGES, build
+
+            key = range if range in RANGES else DEFAULT_RANGE
+            store = None
+            if not os.environ.get("ACE_SIDECAR_NO_TELEMETRY"):
+                try:
+                    from ace.gateway.local_store import LocalStore
+                    db_path = os.environ.get("ACE_SIDECAR_TELEMETRY_DB", os.path.expanduser("~/.ace/telemetry.db"))
+                    if os.path.exists(db_path):
+                        store = LocalStore(db_path)
+                except Exception:
+                    pass
+
+            html = render(build(store=store, range_key=key, agent=agent))
+            if privacy:
+                privacy_style = """
+                <style>
+                  .st .v, .st .n, td.num, .rec-saving, .lever-headroom, .calcbox pre {
+                    filter: blur(8px) !important;
+                    user-select: none !important;
+                    transition: filter 0.2s;
+                  }
+                  .st .v:hover, .st .n:hover, td.num:hover {
+                    filter: blur(0px) !important;
+                  }
+                </style>
+                """
+                html = html.replace("</head>", f"{privacy_style}</head>")
+                html = html.replace("• LOCAL ONLY", "🔒 PRIVACY MODE · PII MASKED")
+            return HTMLResponse(html)
+        except Exception as e:
+            return HTMLResponse(f"<h1>Dashboard Error</h1><pre>{e}</pre>")
 
     @app.post("/v1/messages")
     async def handle_messages(request: Request) -> Response:

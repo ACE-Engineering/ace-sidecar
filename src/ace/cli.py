@@ -207,15 +207,26 @@ def cmd_up(args: argparse.Namespace) -> int:
 
         store = LocalStore(telemetry_db)
 
-    app = build_sidecar_app(
-        api_key=api_key, base_url=base_url, capture=writer, accountant=store
+    from ace.sidecar.proxy import create_sidecar_app
+    from ace.sidecar.compression.engine import ContextOptimizer
+    from ace.sidecar.routing.router import SidecarRouter
+
+    optimizer = ContextOptimizer()
+    router = SidecarRouter()
+    app = create_sidecar_app(
+        optimizer=optimizer,
+        router=router,
+        upstream_url=base_url,
+        api_key=api_key,
     )
     url = f"http://{host}:{port}"
 
-    print(f"\n  Dashboard: {url}/dashboard")
-    print(f"  Health:    {url}/healthz")
-    if store:
-        print(f"  Telemetry: {store.path}  (local SQLite, never uploaded)")
+    print(f"\n  🚀 ACE Sidecar running on {url} (Loopback Local)")
+    print(f"  • Context Compression: Active (Tool truncation, SHA-256 dedup, idle compaction)")
+    print(f"  • Local Model Routing: Active (Profile: {router.config.active_profile})")
+    print(f"  • Claude CLI Injection: export ANTHROPIC_BASE_URL={url}")
+    print(f"  • Dashboard:            {url}/dashboard (Privacy Mode: {url}/dashboard?privacy=1)")
+    print(f"  • Health & Stats:       {url}/healthz | {url}/api/stats")
     if writer:
         print(f"\n  RECORDING -> {writer.path}")
         print("  Contains your prompts and source. Local only; never commit it.")
