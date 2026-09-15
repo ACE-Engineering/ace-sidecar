@@ -19,6 +19,12 @@ Coding agents like Claude Code are token-heavy by design: every turn sends massi
 
 ACE Sidecar runs a **100% local proxy on loopback (`127.0.0.1`)** that actively reduces your API bill by **30% to 50%+** before requests ever hit the provider:
 
+![ACE Sidecar — The Local Cost Layer](docs/assets/acefleet_sidecar_overview.jpg)
+
+### One Small Layer Between You and the Bill
+
+![ACE Sidecar — How It Works & Request Flow](docs/assets/acefleet_sidecar_flow.jpg)
+
 ```
 ┌────────────────────────────────────────────────────────┐
 │                    Claude Code CLI                     │
