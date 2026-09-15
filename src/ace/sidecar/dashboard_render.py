@@ -197,7 +197,7 @@ border-bottom:1px solid var(--line);flex:none}
 .mark svg{display:block;width:22px;height:22px}
 .brand .n{font-family:var(--display);font-size:18px;font-weight:700;letter-spacing:-.03em;
 line-height:1;color:var(--ink)}
-.brand .s{color:var(--ink-faint);font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+.brand .s{color:var(--ink-faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
 margin-top:4px;text-transform:uppercase}
 .brand .gh{margin-left:auto;display:grid;place-items:center;width:22px;height:22px;
 color:var(--ink-faint);flex:none;transition:color var(--dur-fast) var(--ease)}
@@ -209,21 +209,21 @@ color:var(--ink-faint);flex:none;transition:color var(--dur-fast) var(--ease)}
 .ctl{margin:22px 16px 10px;padding:14px 14px 12px;background:var(--card);
 border:1px solid var(--line-dark);box-shadow:var(--shadow-sm);border-radius:var(--radius)}
 .ctl .h{display:flex;align-items:center;gap:7px;color:var(--olive-text);font-family:var(--mono);
-font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:9px}
-.ctl .cp{color:var(--ink-faint);font-size:11px;line-height:1.45;margin:0 0 13px}
+font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:9px}
+.ctl .cp{color:var(--ink-soft);font-size:11.5px;line-height:1.5;margin:0 0 13px}
 .pulse{width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--olive);
 box-shadow:0 0 0 3px color-mix(in srgb,var(--olive) 16%,transparent);flex:none}
-.rail h4{color:var(--ink-faint);font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+.rail h4{color:var(--ink-faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
 padding:0 10px 8px;text-transform:uppercase;margin:22px 0 0;font-weight:400}
-.side-nav{padding:11px 10px}
+.side-nav{padding:11px 10px 4px}
 .rail .item{position:relative;display:flex;align-items:center;gap:10px;width:100%;
-color:var(--ink-soft);font-size:12px;padding:9px 10px;border-radius:var(--radius);
+color:var(--ink-soft);font-size:13.5px;padding:10px 10px;border-radius:var(--radius);
 transition:background var(--dur) var(--ease),color var(--dur) var(--ease),transform var(--dur) var(--ease)}
 .rail .item:hover{background:var(--card);color:var(--ink);transform:translateX(2px)}
 .rail .item.on{background:var(--card);color:var(--ink);font-weight:600;
 box-shadow:inset 3px 0 0 var(--olive)}
-.rail .ic{width:16px;text-align:center;font-size:12px;opacity:.8;flex:none}
-.nav-badge{margin-left:auto;display:grid;place-items:center;min-width:18px;height:18px;
+.rail .ic{width:18px;text-align:center;font-size:14px;opacity:.85;flex:none}
+.nav-badge{margin-left:auto;display:grid;place-items:center;min-width:20px;height:20px;
 border-radius:10px;color:var(--olive-text);background:var(--olive-tint);
 font-family:var(--mono);font-size:10px}
 .rail-foot{margin-top:auto;padding:14px 16px 17px;border-top:1px solid var(--line)}
