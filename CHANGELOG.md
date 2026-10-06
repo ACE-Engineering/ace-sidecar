@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] - 2026-10-05
+
+Context compression and model routing in the proxy, a code-quality section, and the dashboard on the AceFleet design system.
+
+### Added
+- **Context compression** for Claude Code traffic: tool results truncated around their head and tail, unchanged file re-reads replaced by a digest pointer, prose compression that keeps code, paths and commands verbatim, and compaction of older history once the prompt cache has gone idle.
+- **Model routing** with session stickiness, so a session stays on one model and keeps its prompt cache, and with escalation triggers: an explicit request in the prompt, a jump in task complexity, consecutive failures, and secrets in the context. Configured in `~/.ace/routing.yaml`.
+- **New commands**: `ace mcp` (a local stdio MCP server with line-slice search and hunk edits), `ace setup-claude` (points a Claude Code workspace at those tools), `ace optimize` (previews the token savings on a request file) and `ace routing list|test`.
+- **Lever protocol and ledger**: optimizations register through the `ace.sidecar.levers` entry-point group, are measured on live proxied turns, and are priced on the dashboard rail. An off / shadow / prod toggle shows the counterfactual for every headline metric in its own unit.
+- **Code-quality section (§ 02)**: verification hygiene, reliability, turns and time per task, follow-up fixes, and a breakdown per agent, per model and per task domain. Models and agents with fewer than 20 turns are left out of the comparison.
+- **A grounded reference beside each dashboard metric**, so a figure is shown against something it can be compared to.
+- **Privacy mode** for the dashboard (`/dashboard?privacy=1`), served by `ace up` alongside the proxy.
+
+### Changed
+- **The dashboard follows the AceFleet design system**, with light and dark themes and type sized for reading.
+- The README Quickstart is `ace up`, with install, version-check and upgrade instructions.
+
 ### Fixed
 - **"Current session" shows every session in progress.** It picked the one session with the newest turn, so agents running side by side showed as one. It now takes every session with a turn in the last two hours and, when none is in progress, each agent's most recent session.
 
