@@ -5,8 +5,8 @@ class AceSidecar < Formula
   homepage "https://github.com/ACE-Engineering/ace-sidecar"
   # The filename carries an underscore even though the project name is hyphenated:
   # PEP 625 has build backends normalise it, so .../ace-sidecar-0.1.1.tar.gz is a 404.
-  url "https://files.pythonhosted.org/packages/source/a/ace-sidecar/ace_sidecar-0.1.1.tar.gz"
-  sha256 "88fc9edb468f697139fbf6cccbb7a90fec7a7b9c18634076821fdbc582aaf8fc"
+  url "https://files.pythonhosted.org/packages/source/a/ace-sidecar/ace_sidecar-0.2.0.tar.gz"
+  sha256 "785a7280627bbe3b7b583733dbc95d426ff02ea50d18d5312555129da6b572cc"
   license "AGPL-3.0-or-later"
 
   depends_on "python@3.12"

@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-08-27
+
+Multi-agent observability: Codex transcripts alongside Claude Code and Antigravity.
+
+### Added
+- **Codex agent support.** Codex rollout transcripts, including their event-stream token counts, are read and shown next to the other agents.
+- **Telemetry collector tabs and PromQL recipes** on the dashboard, and dynamic host detection.
+- The rail brand lockup links to the repository.
+
+### Changed
+- **`ace up` prints three lines**, the dashboard, health and telemetry addresses, instead of an eleven-line banner. The `--capture` warning stays.
+- **Switching the agent filter is fast.** Session metadata is held in memory and the page swaps scope without a full reload.
+- Removed the business-inquiry tile from § 14.
+
+### Fixed
+- The rail marker and section jumps keep working after switching agent scope.
+
+---
+
 ## [0.1.1] - 2026-08-15
 
 Fixes the packaging bug that made 0.1.0 report every turn as free.
