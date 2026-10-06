@@ -69,8 +69,9 @@ PARKED_ALARM_MAX_S = 6 * 3600.0
 PARKED_SHARE_OF_IDLE_MEASURED = 0.262
 PARKED_MEAN_S_MEASURED = 64 * 60.0
 
-# "session" is not a time window — it selects the single most-recently-active session, which
-# is what a developer means by "what am I doing right now". Kept in the same ordered map so
+# "session" is not a time window — it selects every session with a turn in the last two hours,
+# else each agent's most recent one: what a developer means by "what am I doing right now",
+# including agents running side by side. Kept in the same ordered map so
 # the UI renders one row of choices, coarsest-to-finest reading left to right.
 SESSION = "session"
 RANGES: Dict[str, Optional[float]] = {

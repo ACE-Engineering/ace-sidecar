@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **"Current session" shows every session in progress.** It picked the one session with the newest turn, so agents running side by side showed as one. It now takes every session with a turn in the last two hours and, when none is in progress, each agent's most recent session.
+
 ---
 
 ## [0.1.1] - 2026-08-15
